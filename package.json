@@ -1,10 +1,23 @@
 {
-  "name": "${PROJECT_NAME}",
+  "name": "shopify",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "start:dev": "nodemon index.js"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "axios": "^1.9.0",
+    "express": "^5.1.0",
+    "graphql": "^16.11.0",
+    "graphql-request": "^7.2.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.5.0",
+    "nodemon": "^3.1.10",
+    "nodenv": "^0.1.0"
+  }
 }
