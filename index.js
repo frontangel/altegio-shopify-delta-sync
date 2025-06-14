@@ -4,6 +4,8 @@ import { useStore } from './store/useStore.js';
 import { CacheManager } from './store/cache.manager.js';
 import { mutateInventoryQuantity } from './services/shopify.service.js'
 import { addTask } from './services/queue.service.js';
+import { waitUntilReady } from './middleware/waitReady.middleware.js';
+import { basicAuthMiddleware } from './middleware/baseAuth.middleware.js';
 
 
 const PORT = process.env.PORT || 3000;
@@ -12,20 +14,8 @@ app.use(express.json());
 
 const { getShopifyInventoryIdsBySku, getAltegioArticleById, isReady } = useStore()
 
-async function waitUntilReady(req, res, next) {
-  if (isReady()) return next()
-
-  console.log('⏳ Очікуємо завершення мапінгу SKU…');
-  try {
-    await getShopifyInventoryIdsBySku();
-    return next();
-  } catch (err) {
-    return res.status(500).json({ error: 'SKU Mapping failed', detail: err.message });
-  }
-}
-
 // ⏱ middleware підключається перед усіма потрібними ендпоінтами
-app.use(['/sku', '/webhook', '/db'], waitUntilReady);
+app.use(['/sku', '/db'], basicAuthMiddleware, waitUntilReady);
 
 app.get('/db', async (req, res) => {
   return res.json({
@@ -39,7 +29,7 @@ app.get('/sku', async (req, res) => {
   return res.json({ shopifyInventoryId })
 });
 
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', waitUntilReady, async (req, res) => {
   const resource = req.body.resource;
 
   switch (resource) {
