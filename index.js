@@ -33,6 +33,9 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
   const resource = req.body.resource;
 
   switch (resource) {
+    case 'goods_operations_move':
+    case 'goods_operations_stolen':
+    case 'goods_operations_receipt':
     case 'goods_operations_sale': {
       const sku_from_altegio = await getAltegioArticleById(req.body.company_id, req.body.data?.good?.id)
       const inventoryItemId = CacheManager.inventoryItemIdByAltegioSku(sku_from_altegio)
