@@ -14,7 +14,11 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(express.json());
 
-app.use(['/sku', '/db'], basicAuthMiddleware, waitUntilReady);
+app.use(['/sku', '/db', '/logs'], basicAuthMiddleware, waitUntilReady);
+
+app.get('/logs', (req, res) => {
+  res.json(CacheManager.getWebhookLogs());
+});
 
 app.get('/db', async (req, res) => {
   return res.json({
@@ -24,7 +28,7 @@ app.get('/db', async (req, res) => {
 })
 
 app.get('/sku', async (req, res) => {
-  const shopifyInventoryId = CacheManager.inventoryItemIdByAltegioSku(req.query.sku)
+  const shopifyInventoryId = await CacheManager.inventoryItemIdByAltegioSku(req.query.sku)
   return res.json({ shopifyInventoryId })
 });
 
@@ -52,35 +56,95 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
 
   const { resource, status, company_id, data } = req.body;
   const rule = operationRules[resource];
-
-  if (!rule) return res.json({ message: 'ok' });
-
   const { type_id, type, storage, amount: rawAmount, good } = data || {};
+
+
+  if (!rule) {
+    const logRule = {
+      status: 'skipped',
+      goodId: good?.id,
+      resource,
+      reason: 'Skip by rule',
+    }
+    CacheManager.logWebhook(logRule);
+    return res.json(logRule);
+  }
+
+
   const storageId = storage?.id;
   let amount;
 
   if (rule.type_id !== type_id || rule.type !== type) {
-    return res.json({ message: 'ok' });
+    const logType = {
+      status: 'skipped',
+      goodId: good?.id,
+      type,
+      type_id,
+      reason: 'Skip by type',
+    }
+    CacheManager.logWebhook(logType);
+    return res.json(logType);
   }
 
   if (rule.onlyStorageId && rule.onlyStorageId !== storageId) {
-    return res.json({ message: 'ok' });
+    const logStorage = {
+      status: 'skipped',
+      goodId: good?.id,
+      onlyStorageId: rule.onlyStorageId,
+      reason: 'Skip by storageId',
+    }
+    CacheManager.logWebhook(logStorage);
+    return res.json(logStorage);
   }
   if (rule.onlyStatus && rule.onlyStatus !== status) {
-    return res.json({ message: 'ok' });
+    const logStatus = {
+      status: 'skipped',
+      goodId: good?.id,
+      onlyStatus: rule.onlyStatus,
+      reason: 'Skip by status',
+    }
+    CacheManager.logWebhook(logStatus);
+    return res.json(logStatus);
   }
 
   if (status === 'create') amount = rawAmount;
   else if (status === 'delete') amount = -rawAmount;
 
   if (!amount || typeof amount !== 'number') {
-    return res.json({ message: 'ok' });
+    const logAmount = {
+      status: 'skipped',
+      goodId: good?.id,
+      amount,
+      reason: 'Skip by amount',
+    }
+    CacheManager.logWebhook(logAmount);
+    return res.json(logAmount);
   }
 
   const sku_from_altegio = await getAltegioArticleById(company_id, good?.id);
-  const inventoryItemId = CacheManager.inventoryItemIdByAltegioSku(sku_from_altegio);
+  const inventoryItemId = await CacheManager.inventoryItemIdByAltegioSku(sku_from_altegio);
+
+  if (!inventoryItemId) {
+    const logInventoryItemId = {
+      status: 'skipped',
+      goodId: good?.id,
+      inventoryItemId,
+      reason: 'Skip by inventory item id',
+    }
+    CacheManager.logWebhook(logInventoryItemId);
+    return res.json(logInventoryItemId);
+  }
+
   addTask(() => mutateInventoryQuantity(inventoryItemId, amount));
-  return res.json({ sku_from_altegio, inventoryItemId, amount });
+
+  const logAdded = {
+    status: 'added',
+    goodId: good?.id,
+    inventoryItemId,
+    amount
+  }
+  CacheManager.logWebhook(logAdded);
+  return res.json(logAdded);
 });
 
 if (process.env.NODE_ENV !== 'test') {

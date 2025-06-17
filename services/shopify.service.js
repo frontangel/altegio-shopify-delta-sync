@@ -1,5 +1,6 @@
 import { GraphQLClient } from 'graphql-request';
 import { useUtils } from '../utils/index.js';
+import { CacheManager } from '../store/cache.manager.js';
 const { sleep } = useUtils()
 
 const version = process.env.SF_API_VERSION;
@@ -144,9 +145,11 @@ export async function mutateInventoryQuantity(inventoryItemId, delta) {
       console.warn('⚠ Shopify returned userErrors:', response.inventoryAdjustQuantities.userErrors);
     }
     console.log('✅ Inventory adjusted:', delta);
+    CacheManager.logWebhook({ status: 'success', inventoryItemId, amount: delta });
     return response;
   } catch (error) {
     console.error('❌ Failed to adjust inventory:', error.response?.errors || error.message);
+    CacheManager.logWebhook({ status: 'failed', inventoryItemId, amount: delta });
     throw error;
   }
 }
