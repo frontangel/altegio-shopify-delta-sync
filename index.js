@@ -58,7 +58,6 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
   const rule = operationRules[resource];
   const { type_id, type, storage, amount: rawAmount, good } = data || {};
 
-
   if (!rule) {
     const logRule = {
       status: 'skipped',
@@ -141,7 +140,8 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
     status: 'added',
     goodId: good?.id,
     inventoryItemId,
-    amount
+    amount,
+    json: JSON.stringify(req.body)
   }
   CacheManager.logWebhook(logAdded);
   return res.json(logAdded);
