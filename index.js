@@ -57,28 +57,45 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
   const { resource, status, company_id, data } = req.body;
   const rule = operationRules[resource];
   const { type_id, type, storage, amount: rawAmount, good } = data || {};
+  const storageId = storage?.id;
+
+  if (['update'].includes(status)) {
+    const logUpdate = {
+      status: 'skipped',
+      goodId: good?.id,
+      resource,
+      type_id,
+      type,
+      storageId,
+      reason: `Skip by status: ${status}`,
+    }
+    CacheManager.logWebhook(logUpdate);
+    return res.json(logUpdate);
+  }
 
   if (!rule) {
     const logRule = {
       status: 'skipped',
       goodId: good?.id,
       resource,
+      type_id,
+      type,
+      storageId,
       reason: 'Skip by rule',
     }
     CacheManager.logWebhook(logRule);
     return res.json(logRule);
   }
 
-
-  const storageId = storage?.id;
   let amount;
-
   if (rule.type_id !== type_id || rule.type !== type) {
     const logType = {
       status: 'skipped',
       goodId: good?.id,
-      type,
+      resource,
       type_id,
+      type,
+      storageId,
       reason: 'Skip by type',
     }
     CacheManager.logWebhook(logType);
@@ -89,18 +106,25 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
     const logStorage = {
       status: 'skipped',
       goodId: good?.id,
-      onlyStorageId: rule.onlyStorageId,
+      resource,
+      type_id,
+      type,
+      storageId,
       reason: 'Skip by storageId',
     }
     CacheManager.logWebhook(logStorage);
     return res.json(logStorage);
   }
+
   if (rule.onlyStatus && rule.onlyStatus !== status) {
     const logStatus = {
       status: 'skipped',
       goodId: good?.id,
-      onlyStatus: rule.onlyStatus,
-      reason: 'Skip by status',
+      resource,
+      type_id,
+      type,
+      storageId,
+      reason: `Skip by status: ${status}`,
     }
     CacheManager.logWebhook(logStatus);
     return res.json(logStatus);
@@ -113,8 +137,11 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
     const logAmount = {
       status: 'skipped',
       goodId: good?.id,
-      amount,
-      reason: 'Skip by amount',
+      resource,
+      type_id,
+      type,
+      storageId,
+      reason: `Skip by amount: ${amount}`,
     }
     CacheManager.logWebhook(logAmount);
     return res.json(logAmount);
@@ -127,8 +154,11 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
     const logInventoryItemId = {
       status: 'skipped',
       goodId: good?.id,
-      inventoryItemId,
-      reason: 'Skip by inventory item id',
+      resource,
+      type_id,
+      type,
+      storageId,
+      reason: `Skip by inventory item id: ${inventoryItemId}`,
     }
     CacheManager.logWebhook(logInventoryItemId);
     return res.json(logInventoryItemId);
@@ -139,6 +169,10 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
   const logAdded = {
     status: 'added',
     goodId: good?.id,
+    resource,
+    type_id,
+    type,
+    storageId,
     inventoryItemId,
     amount,
     json: JSON.stringify(req.body)
