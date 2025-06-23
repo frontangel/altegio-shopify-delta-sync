@@ -17,6 +17,6 @@ export async function fetchProduct(companyId, productId) {
     return data;
   } catch (error) {
     console.error('Помилка при отриманні товарів:', error.response?.data || error.message);
-    throw error;
+    throw error
   }
 }

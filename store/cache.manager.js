@@ -10,11 +10,17 @@ export const CacheManager = {
   articleMapper,
   notFoundCache,
   webhookLogs: [],
+  updateLogById(entry) {
+    const log = this.webhookLogs.find(l => l._id === entry._id);
+    if (!log) return false
+    Object.assign(log, entry)
+    return true
+  },
   logWebhook(entry) {
     const now = Date.now();
     this.webhookLogs.unshift({ ...entry, timestamp: now });
-    const oneDay = 24 * 60 * 60 * 1000;
-    this.webhookLogs = this.webhookLogs.filter(log => now - log.timestamp < oneDay);
+    const days = 3 * 24 * 60 * 60 * 1000;
+    this.webhookLogs = this.webhookLogs.filter(log => now - log.timestamp < days);
   },
   getWebhookLogs() {
     return this.webhookLogs;

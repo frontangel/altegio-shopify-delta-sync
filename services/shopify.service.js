@@ -106,7 +106,9 @@ export async function getInventoryItemById(inventoryItemId) {
   }
 }
 
-export async function mutateInventoryQuantity(inventoryItemId, delta) {
+export async function mutateInventoryQuantity(ctx) {
+  const { inventory_item_id: inventoryItemId, amount: delta } = ctx.state
+
   const query = `
     mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
       inventoryAdjustQuantities(input: $input) {
@@ -123,7 +125,6 @@ export async function mutateInventoryQuantity(inventoryItemId, delta) {
       }
     }
   `;
-
   const variables = {
     input: {
       reason: 'correction',
@@ -142,14 +143,17 @@ export async function mutateInventoryQuantity(inventoryItemId, delta) {
     const response = await shopify.request(query, variables);
 
     if (response.inventoryAdjustQuantities.userErrors?.length) {
-      console.warn('⚠ Shopify returned userErrors:', response.inventoryAdjustQuantities.userErrors);
+      ctx.log.status = 'error';
+      ctx.log.reason = response.inventoryAdjustQuantities.userErrors
+    } else {
+      ctx.log.status = 'success';
+      ctx.log.reason = `Inventory adjusted: ${delta}`;
     }
-    console.log('✅ Inventory adjusted:', delta);
-    CacheManager.logWebhook({ status: 'success', inventoryItemId, amount: delta });
-    return response;
+    CacheManager.updateLogById(ctx.log);
   } catch (error) {
-    console.error('❌ Failed to adjust inventory:', error.response?.errors || error.message);
-    CacheManager.logWebhook({ status: 'failed', inventoryItemId, amount: delta });
+    ctx.log.status = 'error';
+    ctx.log.reason = error.response?.errors || error.message
+    CacheManager.updateLogById(ctx.log);
     throw error;
   }
 }
