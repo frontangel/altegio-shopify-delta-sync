@@ -114,10 +114,13 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
     return res.status(400).json({ error: true, message: ctx.log.reason });
   }
 
-  if (!ctx.done) {
-    ctx.log.status = 'inprogress';
-    ctx.log.reason = `Added to queue, delta: ${ctx.state.amount}`;
+  if (ctx.done) {
+    CacheManager.logWebhook(ctx.log);
+    return res.status(200).json({ status: ctx.log.status, message: ctx.log.reason });
   }
+
+  ctx.log.status = 'inprogress';
+  ctx.log.reason = `Added to queue, delta: ${ctx.state.amount}`;
   CacheManager.logWebhook(ctx.log);
 
   addTask(() => mutateInventoryQuantity(ctx));
