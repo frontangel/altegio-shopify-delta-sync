@@ -16,21 +16,52 @@ import { convertAmountStep } from './steps/convert-amount.step.js';
 import { skipByAmountStep } from './steps/skip-by-amount.step.js';
 import { getAltegioSkuStep } from './steps/get-altegio-sku.step.js';
 import { getInventoryItemIdStep } from './steps/get-inventory-item-id.step.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 
 const { getShopifyInventoryIdsBySku, getAltegioArticleById } = useStore()
 const PORT = process.env.PORT || 3000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json());
 
+app.set('views', path.join(__dirname, 'views'));
+app.set('view engine', 'ejs');
 app.use(['/sku', '/db', '/logs'], basicAuthMiddleware, waitUntilReady);
 
 app.get('/logs', (req, res) => {
-  const { returnHtmlLog } = useUtils();
-  const logs = CacheManager.getWebhookLogs()
-  res.setHeader('Content-Type', 'text/html');
-  res.send(logs.map(returnHtmlLog).join('\n'));
+  const { formatedLog } = useUtils();
+  const logs = CacheManager.getWebhookLogs().map(formatedLog);
+  res.render('logs', { logs });
+
+  // const css = `
+  //   <style>
+  //     body { font-family: sans-serif; padding: 0; background: #f8f8f8; color: #333; font-size: 1rem }
+  //     .log-entry { margin-bottom: 1rem; padding: 1rem; background: #fff; border: 1px solid #ddd; border-radius: 6px; }
+  //     .json-toggle-wrapper { display: block; margin-top: 8px; cursor: pointer; user-select: none; }
+  //     .json-checkbox { display: none; }
+  //     .json-toggle { color: grey; display: none; white-space: pre; font-size: 0.75rem; }
+  //     .json-content { display: none; margin-top: 4px; background: #f5f5f5; padding: 8px; border: 1px solid #ccc; white-space: pre-wrap; }
+  //     .json-checkbox:checked ~ .json-toggle { display: block; }
+  //   </style>
+  // `;
+  //
+  // const html = `
+  //   <!DOCTYPE html>
+  //   <html>
+  //     <head>
+  //       <meta charset="UTF-8" />
+  //       <title>Webhook Logs</title>
+  //       ${css}
+  //     </head>
+  //     <body>${logs.map(returnHtmlLog).join('\n')}</body>
+  //   </html>`;
+  //
+  // res.setHeader('Content-Type', 'text/html')
+  // res.send(html)
 });
 
 app.get('/db', async (req, res) => {
@@ -53,7 +84,7 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
     goods_operations_move: {type_id: 0, type: 'Moving products', onlyStorageId: 2557508, onlyStatus: 'create'}
   };
   const { resource, status, company_id, data } = req.body;
-  const { type_id, type, storage, amount: rawAmount, good } = data || {};
+  const { type_id, type, storage, amount: rawAmount, good } = data || { type_id: '', type: ''};
 
   const requestId =  crypto.randomUUID()
 
@@ -70,14 +101,16 @@ app.post('/webhook', waitUntilReady, async (req, res) => {
     log: {
       _id: requestId,
       status: 'new',
-      goodId: good?.id,
+      goodId: good?.id || '',
       resource,
       type_id,
       type,
       storageId: storage?.id,
       reason: '',
       altegio_sku: '',
-      inventory_item_id: ''
+      inventory_item_id: '',
+      delta: 0,
+      json: JSON.stringify(req.body),
     },
     get rule() {
       return this.rules[resource]
