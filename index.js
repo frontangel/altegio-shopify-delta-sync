@@ -59,6 +59,7 @@ app.post('/webhook', async (req, res) => {
     log: {
       status: '',
       reason: '',
+      type: 'hook',
     },
     error: false,
     done: false,
@@ -85,12 +86,12 @@ app.post('/webhook', async (req, res) => {
   }
 
   if (ctx.error) {
-    CacheManager.logWebhook({ ...ctx.log, json: JSON.stringify(req.body) });
+    CacheManager.logWebhook({ ...ctx.log, type: 'hook', json: JSON.stringify(req.body) });
     return res.status(400).json({ error: true, message: ctx.log.reason });
   }
 
   if (ctx.done) {
-    CacheManager.logWebhook({ ...ctx.log, json: JSON.stringify(req.body) });
+    CacheManager.logWebhook({ ...ctx.log, type: 'hook', json: JSON.stringify(req.body) });
     return res.status(200).json({ status: ctx.log.status, message: ctx.log.reason });
   }
 
