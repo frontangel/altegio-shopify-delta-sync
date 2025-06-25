@@ -20,8 +20,6 @@ export async function processNextTask() {
     console.log('✅ Task completed');
   } catch (err) {
     console.error('❌ Task failed:', err.message);
-    // При потребі можна повертати задачу назад:
-    // taskQueue.unshift(task);
   } finally {
     isProcessing = false;
   }
