@@ -87,13 +87,9 @@
         <th>Date</th>
         <th>Status</th>
         <th>Reason</th>
-        <th>Resource</th>
         <th>Type</th>
-        <th>Type ID</th>
-        <th>Altegio ID</th>
         <th>Altegio SKU</th>
-        <th>Shopify ID</th>
-        <th>Delta</th>
+        <th>Quantity</th>
         <th>JSON</th>
     </tr>
     </thead>
@@ -103,13 +99,9 @@
             <td><%= log.date %></td>
             <td class="status-cell <%= log.status %>"><%= log.status %></td>
             <td><%= log.reason %></td>
-            <td><%= log.resource %></td>
             <td><%= log.type %></td>
-            <td><%= log.type_id %></td>
-            <td><%= log.goodId %></td>
             <td><%= log.altegio_sku %></td>
-            <td><%= log.inventory_item_id %></td>
-            <td><%= log.delta %></td>
+            <td><%= log.quantity %></td>
             <td>
                 <% if (log.json) { %>
                     <button class="json-toggle-btn" data-target="<%= jsonId %>">Показати</button>

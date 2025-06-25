@@ -106,6 +106,51 @@ export async function getInventoryItemById(inventoryItemId) {
   }
 }
 
+export async function setAbsoluteQuantity(inventoryItemId, quantity) {
+  const mutation = `
+    mutation InventorySet($input: InventorySetQuantitiesInput!) {
+      inventorySetQuantities(input: $input) {
+        inventoryAdjustmentGroup {
+          createdAt
+          reason
+          changes {
+            name
+            delta
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }`;
+
+  const variables = {
+    input: {
+      reason: 'correction',
+      name: 'available',
+      ignoreCompareQuantity: true,
+      quantities: [
+        {
+          inventoryItemId,
+          locationId,
+          quantity
+        },
+      ],
+    },
+  };
+
+  try {
+    const result = await shopify.request(mutation, variables);
+    if (result.inventorySetQuantities.userErrors?.length > 0) {
+      throw new Error('Shopify returned userErrors');
+    }
+  } catch (e) {
+    console.error('Failed to set quantity:', JSON.stringify(e.response?.errors[0]?.extensions, null, 2) || e.message);
+    throw e;
+  }
+}
+
 export async function mutateInventoryQuantity(ctx) {
   const { inventory_item_id: inventoryItemId, amount: delta } = ctx.state
 
