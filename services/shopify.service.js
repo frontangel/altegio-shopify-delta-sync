@@ -1,7 +1,8 @@
 import { GraphQLClient } from 'graphql-request';
 import { useUtils } from '../utils/index.js';
 import { CacheManager } from '../store/cache.manager.js';
-const { sleep } = useUtils()
+
+const {sleep} = useUtils();
 
 const version = process.env.SF_API_VERSION;
 const domain = process.env.SF_DOMAIN;
@@ -16,14 +17,12 @@ const shopify = new GraphQLClient(url, {
   },
 });
 
-export async function getProducts(cursor = null) {
+export async function getProducts(cursor = null, first = 150) {
+  const variables = { cursor, first };
   const query = `
-    query($cursor: String) {
-      products(first: 250, after: $cursor, sortKey: ID) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
+    query($cursor: String, $first: Int!) {
+      products(first: $first, after: $cursor, sortKey: ID, query: "status:active") {
+        pageInfo { hasNextPage endCursor }
         edges {
           node {
             id
@@ -34,14 +33,7 @@ export async function getProducts(cursor = null) {
                   id
                   sku
                   inventoryItem { id }
-                  metafields(first: 50, namespace: "custom") {
-                    edges {
-                      node {
-                        key
-                        value
-                      }
-                    }
-                  }
+                  metafield(namespace: "custom", key: "sku_from_altegio") { value }
                 }
               }
             }
@@ -50,27 +42,59 @@ export async function getProducts(cursor = null) {
       }
     }
   `;
-
-  return await shopify.request(query, {cursor});
+  const res = await requestWithThrottle(query, variables);
+  return res; // { products: { pageInfo, edges } }
 }
 
 export async function fetchAllProducts() {
-  let all = [];
+  const all = [];
   let cursor = null;
-  let hasNext = true;
+  let first = 150;     // стартовий розмір сторінки
+  let cleanStreak = 0; // сторінки без throttling поспіль
+  let page = 0;
 
-  while (hasNext) {
-    console.info('🔄 fetching products...')
-    const data = await getProducts(cursor);
-    const edges = data.products.edges;
+  while (true) {
+    page += 1;
+    const startedAt = Date.now();
+    const res = await getProducts(cursor, first);
+    const { edges = [], pageInfo } = res.products ?? {};
+
+    const tookMs = Date.now() - startedAt;
+    const { attempts, waitedMs } = getLastThrottle();
+
+    console.log(
+      `[Shopify] page=${page} first=${first} items=${edges.length} ` +
+      `throttle(attempts=${attempts}, waitedMs=${waitedMs}) took=${tookMs}ms`
+    );
+
     all.push(...edges);
 
-    hasNext = data.products.pageInfo.hasNextPage;
-    cursor = data.products.pageInfo.endCursor;
-    await sleep(1000)
+    // адаптація розміру сторінки
+    if (attempts > 0 || waitedMs > 1500) {
+      cleanStreak = 0;
+      const old = first;
+      first = Math.max(50, first - 25);
+      if (first !== old) {
+        console.warn(`[Shopify] reducing page size: ${old} → ${first}`);
+      }
+    } else {
+      cleanStreak += 1;
+      if (cleanStreak >= 3) {
+        const old = first;
+        first = Math.min(200, first + 25);
+        cleanStreak = 0;
+        if (first !== old) {
+          console.log(`[Shopify] increasing page size: ${old} → ${first}`);
+        }
+      }
+    }
+
+    if (!pageInfo?.hasNextPage) break;
+    cursor = pageInfo.endCursor;
   }
-  console.log(`📦 ${all.length} products fetched`)
-  return all;
+
+  console.log(`[Shopify] fetched products total edges=${all.length}`);
+  return all; // масив product edges
 }
 
 export async function getInventoryItemById(inventoryItemId) {
@@ -98,7 +122,7 @@ export async function getInventoryItemById(inventoryItemId) {
   `;
 
   try {
-    const data = await shopify.request(query, {id: inventoryItemId});
+    const data = await requestWithThrottle(query, {id: inventoryItemId});
     return data.inventoryItem;
   } catch (error) {
     console.error('Failed to fetch inventory item:', error.response?.errors || error.message);
@@ -141,7 +165,7 @@ export async function setAbsoluteQuantity(inventoryItemId, quantity) {
   };
 
   try {
-    const result = await shopify.request(mutation, variables);
+    const result = await requestWithThrottle(mutation, variables);
     if (result.inventorySetQuantities.userErrors?.length > 0) {
       throw new Error('Shopify returned userErrors');
     }
@@ -152,7 +176,7 @@ export async function setAbsoluteQuantity(inventoryItemId, quantity) {
 }
 
 export async function mutateInventoryQuantity(ctx) {
-  const { inventory_item_id: inventoryItemId, amount: delta } = ctx.state
+  const {inventory_item_id: inventoryItemId, amount: delta} = ctx.state;
 
   const query = `
     mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
@@ -185,11 +209,12 @@ export async function mutateInventoryQuantity(ctx) {
   };
 
   try {
-    const response = await shopify.request(query, variables);
+    const response = await requestWithThrottle(query, variables);
+    ;
 
     if (response.inventoryAdjustQuantities.userErrors?.length) {
       ctx.log.status = 'error';
-      ctx.log.reason = response.inventoryAdjustQuantities.userErrors
+      ctx.log.reason = response.inventoryAdjustQuantities.userErrors;
     } else {
       ctx.log.status = 'success';
       ctx.log.reason = `Inventory adjusted: ${delta}`;
@@ -197,8 +222,50 @@ export async function mutateInventoryQuantity(ctx) {
     CacheManager.updateLogById(ctx.log);
   } catch (error) {
     ctx.log.status = 'error';
-    ctx.log.reason = error.response?.errors || error.message
+    ctx.log.reason = error.response?.errors || error.message;
     CacheManager.updateLogById(ctx.log);
     throw error;
+  }
+}
+
+let _lastThrottle = { attempts: 0, waitedMs: 0 };
+export function getLastThrottle() { return _lastThrottle; }
+
+export async function requestWithThrottle(query, variables = {}, { maxRetries = 8 } = {}) {
+  let attempt = 0;
+  _lastThrottle = { attempts: 0, waitedMs: 0 };
+
+  while (true) {
+    try {
+      const res = await shopify.request(query, variables);
+      return res; // УВАГА: graphql-request повертає одразу data-тіло
+    } catch (err) {
+      const code =
+        err?.response?.errors?.[0]?.extensions?.code ||
+        err?.response?.extensions?.code;
+      const cost = err?.response?.extensions?.cost;
+      const throttle = cost?.throttleStatus;
+
+      if (code !== 'THROTTLED' && !throttle) throw err;
+
+      attempt += 1;
+      if (attempt > maxRetries) {
+        throw new Error(`Shopify THROTTLED: перевищено кількість спроб (${maxRetries}). ${err.message}`);
+      }
+
+      const requested = cost?.requestedQueryCost ?? 1000;
+      const available = throttle?.currentlyAvailable ?? 0;
+      const restoreRate = throttle?.restoreRate ?? 50; // кредити/сек
+      const deficit = Math.max(0, requested - available);
+      const waitSec = Math.max(1.5, Math.ceil(deficit / restoreRate));
+      const jitterMs = Math.floor(Math.random() * 300);
+      const waitMs = waitSec * 1000 + jitterMs;
+
+      console.warn(`[Shopify] THROTTLED. requested=${requested}, available=${available}, rate=${restoreRate}/s, attempt=${attempt}. wait≈${waitMs}ms`);
+      _lastThrottle.attempts += 1;
+      _lastThrottle.waitedMs += waitMs;
+
+      await sleep(waitMs);
+    }
   }
 }

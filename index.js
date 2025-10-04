@@ -23,6 +23,16 @@ app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 app.use(['/sku', '/db', '/logs'], basicAuthMiddleware, waitUntilReady);
 
+
+app.get('/healthz', (req, res) => {
+  const { isReady } = useStore();
+  res.json({
+    ok: true,
+    ready: isReady(),
+    skuCacheSize: CacheManager.skuMapper.size,
+  });
+});
+
 app.get('/logs', (req, res) => {
   const { formatedLog } = useUtils();
   const logs = CacheManager.getWebhookLogs().map(formatedLog);
