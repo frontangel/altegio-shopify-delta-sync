@@ -5,6 +5,8 @@ const skuMapper = new Map()
 const articleMapper = new Map()
 const notFoundCache = new Set()
 
+const MAX_LOGS = 5000;
+
 export const CacheManager = {
   skuMapper,
   articleMapper,
@@ -17,10 +19,10 @@ export const CacheManager = {
     return true
   },
   logWebhook(entry) {
-    const now = Date.now();
-    this.webhookLogs.unshift({ ...entry, timestamp: now });
-    const days = 3 * 24 * 60 * 60 * 1000;
-    this.webhookLogs = this.webhookLogs.filter(log => now - log.timestamp < days);
+    this.webhookLogs.push({ _id: Date.now() + Math.random(), timestamp: Date.now(), ...entry });
+    if (this.webhookLogs.length > MAX_LOGS) {
+      this.webhookLogs.splice(0, this.webhookLogs.length - MAX_LOGS);
+    }
   },
   getWebhookLogs() {
     return this.webhookLogs;
