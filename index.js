@@ -11,7 +11,6 @@ import { fileURLToPath } from 'url';
 import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
 
-const { getShopifyInventoryIdsBySku } = useStore();
 const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,41 +22,36 @@ app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 app.use(['/sku', '/db', '/logs'], basicAuthMiddleware, waitUntilReady);
 
-
 app.get('/healthz', (req, res) => {
   const { isReady } = useStore();
-  res.json({
-    ok: true,
-    ready: isReady(),
-    skuCacheSize: CacheManager.skuMapper.size,
-  });
+  res.json({ ok: true, ready: isReady(), skuCacheSize: CacheManager.skuMapper.size });
 });
 
 app.get('/logs', (req, res) => {
-  const { formatedLog } = useUtils();
+  const {formatedLog} = useUtils();
   const logs = CacheManager.getWebhookLogs().map(formatedLog);
-  res.render('logs', { logs });
+  res.render('logs', {logs});
 });
 
 app.get('/db', async (req, res) => {
   return res.json({
     articles: CacheManager.altegioArticleShopifySky(),
     shopifySkuInventory: CacheManager.shopifySkuInventory()
-  })
-})
+  });
+});
 
 app.get('/sku', async (req, res) => {
-  const shopifyInventoryId = await CacheManager.inventoryItemIdByAltegioSku(req.query.sku)
-  return res.json({ shopifyInventoryId })
+  const shopifyInventoryId = await CacheManager.inventoryItemIdByAltegioSku(req.query.sku);
+  return res.json({shopifyInventoryId});
 });
 
 app.post('/webhook', async (req, res) => {
   const operationRules = {
-    goods_operations_sale: { type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: 2557508 },
-    goods_operations_receipt: { type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: 2557508 },
-    goods_operations_stolen: { type_id: 4, type: 'Product write-off', skipStatus: ['update'], onlyStorageId: 2557508 },
-    goods_operations_move: { type_id: 0, type: 'Moving products', onlyStorageId: 2557508, onlyStatus: ['create'] },
-    record: { onlyStatus: 'update', onlyPaidFull: 1 }
+    goods_operations_sale: {type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: 2557508},
+    goods_operations_receipt: {type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: 2557508},
+    goods_operations_stolen: {type_id: 4, type: 'Product write-off', skipStatus: ['update'], onlyStorageId: 2557508},
+    goods_operations_move: {type_id: 0, type: 'Moving products', onlyStorageId: 2557508, onlyStatus: ['create']},
+    record: {onlyStatus: 'update', onlyPaidFull: 1}
   };
 
   const ctx = {
@@ -74,14 +68,14 @@ app.post('/webhook', async (req, res) => {
     error: false,
     done: false,
     get rule() {
-      return this.rules[req.body.resource]
+      return this.rules[req.body.resource];
     }
-  }
+  };
 
   const pipeline = [
     validateRulesStep,
     getProductIdsStep
-  ]
+  ];
 
   for (const step of pipeline) {
     try {
@@ -96,26 +90,33 @@ app.post('/webhook', async (req, res) => {
   }
 
   if (ctx.error) {
-    CacheManager.logWebhook({ ...ctx.log, type: 'hook', json: JSON.stringify(req.body) });
-    return res.status(400).json({ error: true, message: ctx.log.reason });
+    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body)});
+    return res.status(400).json({error: true, message: ctx.log.reason});
   }
 
   if (ctx.done) {
-    CacheManager.logWebhook({ ...ctx.log, type: 'hook', json: JSON.stringify(req.body) });
-    return res.status(200).json({ status: ctx.log.status, message: ctx.log.reason });
+    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body)});
+    return res.status(200).json({status: ctx.log.status, message: ctx.log.reason});
   }
 
-  CacheManager.logWebhook({ status: 'success', type: 'hook', json: JSON.stringify(req.body) });
-  addIdsToQueue(ctx.state.product_ids)
+  CacheManager.logWebhook({status: 'success', type: 'hook', json: JSON.stringify(req.body)});
+  addIdsToQueue(ctx.state.product_ids);
 
   return res.json(ctx.state);
-})
+});
 
-if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server is running on port ${PORT}`);
-    getShopifyInventoryIdsBySku().then(() => console.log('Cashing done.'))
-  });
-}
 
-export default app
+app.listen(PORT, () => {
+  console.log(`🚀 Server is running on port ${PORT}`);
+
+  if (process.env.WARMUP_ON_START === 'true') {
+    setTimeout(() => {
+      useStore().getShopifyInventoryIdsBySku()
+        .then(() => console.log('Cashing done.'))
+        .catch(e => console.warn('Warmup failed:', e?.message || e));
+    }, 30000);
+  }
+});
+
+
+export default app;
