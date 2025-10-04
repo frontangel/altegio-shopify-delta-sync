@@ -21,6 +21,7 @@ export function useUtils() {
   const returnHtmlLog = (log) => {
     const date = new Date(log.timestamp).toLocaleString('uk-UA', { timeZone: 'Europe/Kiev', hour12: false });
     const color = getColorStatus(log.status);
+    console.log(log)
     const result = {
       date,
       status: `<span style="color: ${color}">${log.status} - <i>${log.reason}</i></span>`,
