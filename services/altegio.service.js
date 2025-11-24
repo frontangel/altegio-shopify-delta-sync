@@ -1,7 +1,9 @@
 import axios from 'axios'
 
-const partnerToken = process.env.ALTEGION_TOKEN
-const userToken = process.env.ALTEGION_USER_TOKEN
+// Допоміжне зчитування токенів: спершу шукаємо правильні ALTEGIO_*,
+// але підтримуємо й попереднє написання ALTEGION_* щоб не ламати оточення.
+const partnerToken = process.env.ALTEGIO_TOKEN ?? process.env.ALTEGION_TOKEN
+const userToken = process.env.ALTEGIO_USER_TOKEN ?? process.env.ALTEGION_USER_TOKEN
 
 export async function fetchProduct(companyId, productId) {
   try {
