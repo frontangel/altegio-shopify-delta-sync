@@ -59,6 +59,8 @@ const envSchema = z.object({
 
 const envWithFallbacks = {
   ...process.env,
+  ALTEGIO_COMPANY_ID: process.env.ALTEGIO_COMPANY_ID ?? process.env.ALTEGION_COMPANY_ID,
+  ALTEGIO_STORAGE_ID: process.env.ALTEGIO_STORAGE_ID ?? process.env.ALTEGION_STORAGE_ID,
   ALTEGIO_TOKEN: process.env.ALTEGIO_TOKEN ?? process.env.ALTEGION_TOKEN,
   ALTEGIO_USER_TOKEN: process.env.ALTEGIO_USER_TOKEN ?? process.env.ALTEGION_USER_TOKEN,
 };
