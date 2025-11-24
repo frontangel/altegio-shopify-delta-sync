@@ -109,8 +109,8 @@ Server:
 - SKU_REFRESH_INTERVAL_MS (optional, int) – how often to refresh Shopify SKU cache; default 900000 (15 minutes). Set to 0 to disable.
 
 Altegio:
-- ALTEGIO_COMPANY_ID (required, int)
-- ALTEGIO_STORAGE_ID (required, int)
+- ALTEGIO_COMPANY_ID (required, int) – also accepts ALTEGION_COMPANY_ID as fallback
+- ALTEGIO_STORAGE_ID (required, int) – also accepts ALTEGION_STORAGE_ID as fallback
 - ALTEGIO_TOKEN (required, string) – partner token; also accepts ALTEGION_TOKEN as fallback
 - ALTEGIO_USER_TOKEN (required, string) – user token; also accepts ALTEGION_USER_TOKEN as fallback
 
