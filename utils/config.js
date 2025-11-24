@@ -1,11 +1,26 @@
 import { z } from 'zod';
 
+const requiredInt = (name) =>
+  z
+    .string({ required_error: `${name} is required` })
+    .trim()
+    .regex(/^\d+$/, `${name} must be a positive integer`)
+    .transform((val) => Number(val));
+
+const optionalInt = () =>
+  z
+    .string()
+    .trim()
+    .regex(/^\d+$/)
+    .transform((val) => Number(val))
+    .optional();
+
 const envSchema = z.object({
-  PORT: z.coerce.number().int().positive().optional(),
+  PORT: optionalInt(),
   WARMUP_ON_START: z.string().optional(),
 
-  ALTEGIO_COMPANY_ID: z.coerce.number().int().positive(),
-  ALTEGIO_STORAGE_ID: z.coerce.number().int().positive(),
+  ALTEGIO_COMPANY_ID: requiredInt('ALTEGIO_COMPANY_ID'),
+  ALTEGIO_STORAGE_ID: requiredInt('ALTEGIO_STORAGE_ID'),
   ALTEGIO_TOKEN: z.string().min(1),
   ALTEGIO_USER_TOKEN: z.string().min(1),
 
@@ -17,8 +32,8 @@ const envSchema = z.object({
   BASIC_AUTH_USER: z.string().optional(),
   BASIC_AUTH_PASS: z.string().optional(),
 
-  IDEMPOTENCY_TTL_MS: z.coerce.number().int().positive().optional(),
-  QUEUE_BACKOFF_BASE_MS: z.coerce.number().int().positive().optional(),
+  IDEMPOTENCY_TTL_MS: optionalInt(),
+  QUEUE_BACKOFF_BASE_MS: optionalInt(),
 });
 
 const envWithFallbacks = {
