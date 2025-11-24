@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as AltegioService from '../services/altegio.service.js';
-import * as ShopifyService from '../services/shopify.service.js'
+import * as ShopifyService from '../services/shopify.service.js';
 import { CacheManager } from '../store/cache.manager.js';
 import { CONFIG } from '../utils/config.js';
 import { getRedisClient, redisQueueAvailable } from '../store/redis.client.js';
@@ -132,11 +132,12 @@ export async function processNextId() {
     const { goodId, usingRedis } = await pullNextId();
     if (!goodId) return;
 
-    const ctx = {
-      altegio_sku: '',
-      quantity: null,
-      storage_id: CONFIG.altegio.storageId,
-    };
+  const ctx = {
+    altegio_sku: '',
+    quantity: null,
+    storage_id: CONFIG.altegio.storageId,
+    company_id: CONFIG.altegio.companyId,
+  };
 
     try {
       await handleGoodId(goodId, ctx);
@@ -146,7 +147,16 @@ export async function processNextId() {
       const nextAttempt = (retryCounts.get(goodId) ?? 0) + 1;
       retryCounts.set(goodId, nextAttempt);
 
-      CacheManager.logWebhook({ status: 'error', reason: err.message, type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+      CacheManager.logWebhook({
+        status: 'error',
+        reason: err.message,
+        type: 'correction',
+        altegio_sku: ctx.altegio_sku,
+        quantity: ctx.quantity,
+        storage_id: ctx.storage_id,
+        company_id: ctx.company_id,
+        good_id: goodId,
+      });
       console.error('❌ Task failed:', err.message);
 
       const delay = Math.min(30000, CONFIG.queue.backoffBaseMs * Math.pow(2, nextAttempt));
@@ -158,8 +168,8 @@ export async function processNextId() {
 }
 
 async function handleGoodId(goodId, ctx) {
-  const altegioProduct = await AltegioService.fetchProduct(CONFIG.altegio.companyId, goodId)
-  ctx.altegio_sku = altegioProduct?.data?.article
+  const altegioProduct = await AltegioService.fetchProduct(CONFIG.altegio.companyId, goodId);
+  ctx.altegio_sku = altegioProduct?.data?.article;
 
   const amount = (altegioProduct?.data?.actual_amounts ?? []).find(a => a.storage_id === CONFIG.altegio.storageId)?.amount;
   ctx.quantity = typeof amount === 'number' ? amount : null;
@@ -168,13 +178,34 @@ async function handleGoodId(goodId, ctx) {
     throw new Error(`Quantity missing for good ${goodId} and storage ${CONFIG.altegio.storageId}`);
   }
 
-  const inventoryItemId = await CacheManager.inventoryItemIdByAltegioSku(ctx.altegio_sku)
+  const inventoryItemId = await CacheManager.inventoryItemIdByAltegioSku(ctx.altegio_sku);
   if (!inventoryItemId) {
-    CacheManager.logWebhook({ status: 'skipped', reason: 'Inventory item id not found', type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
-    return
+    CacheManager.logWebhook({
+      status: 'skipped',
+      reason: 'Inventory item id not found',
+      type: 'correction',
+      altegio_sku: ctx.altegio_sku,
+      quantity: ctx.quantity,
+      storage_id: ctx.storage_id,
+      company_id: ctx.company_id,
+      good_id: goodId,
+    });
+    return;
   }
-  await ShopifyService.setAbsoluteQuantity(inventoryItemId, ctx.quantity, { altegioSku: ctx.altegio_sku, goodId, storageId: CONFIG.altegio.storageId })
-  CacheManager.logWebhook({ status: 'success', type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+  await ShopifyService.setAbsoluteQuantity(inventoryItemId, ctx.quantity, {
+    altegioSku: ctx.altegio_sku,
+    goodId,
+    storageId: CONFIG.altegio.storageId,
+  });
+  CacheManager.logWebhook({
+    status: 'success',
+    type: 'correction',
+    altegio_sku: ctx.altegio_sku,
+    quantity: ctx.quantity,
+    storage_id: ctx.storage_id,
+    company_id: ctx.company_id,
+    good_id: goodId,
+  });
 }
 
 setInterval(processNextId, 2000);

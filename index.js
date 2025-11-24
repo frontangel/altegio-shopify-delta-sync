@@ -114,12 +114,23 @@ app.post('/webhook', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
 
+  const store = useStore();
+
   if (CONFIG.server.warmupOnStart) {
     setTimeout(() => {
-      useStore().getShopifyInventoryIdsBySku()
+      store.getShopifyInventoryIdsBySku()
         .then(() => console.log('Cashing done.'))
         .catch(e => console.warn('Warmup failed:', e?.message || e));
     }, 30000);
+  }
+
+  if (CONFIG.server.refreshIntervalMs > 0) {
+    setInterval(() => {
+      store
+        .getShopifyInventoryIdsBySku()
+        .then(() => console.log(`[Warmup] Refreshed SKU cache; size=${CacheManager.skuMapper.size}`))
+        .catch(e => console.warn('[Warmup] Refresh failed:', e?.message || e));
+    }, CONFIG.server.refreshIntervalMs);
   }
 });
 
