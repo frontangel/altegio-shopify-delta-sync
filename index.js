@@ -6,12 +6,15 @@ import { waitUntilReady } from './middleware/waitReady.middleware.js';
 import { basicAuthMiddleware } from './middleware/baseAuth.middleware.js';
 import { useUtils } from './utils/index.js';
 import { validateRulesStep } from './steps/validate-rules.step.js';
+import { validateWebhookPayloadStep } from './steps/validate-webhook-payload.step.js';
+import { enforceIdempotencyStep } from './steps/enforce-idempotency.step.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
+import { CONFIG } from './utils/config.js';
 
-const PORT = process.env.PORT || 3000;
+const PORT = CONFIG.server.port;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -47,10 +50,10 @@ app.get('/sku', async (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   const operationRules = {
-    goods_operations_sale: {type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: 2557508},
-    goods_operations_receipt: {type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: 2557508},
-    goods_operations_stolen: {type_id: 4, type: 'Product write-off', skipStatus: ['update'], onlyStorageId: 2557508},
-    goods_operations_move: {type_id: 0, type: 'Moving products', onlyStorageId: 2557508, onlyStatus: ['create']},
+    goods_operations_sale: {type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: CONFIG.altegio.storageId},
+    goods_operations_receipt: {type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: CONFIG.altegio.storageId},
+    goods_operations_stolen: {type_id: 4, type: 'Product write-off', skipStatus: ['update'], onlyStorageId: CONFIG.altegio.storageId},
+    goods_operations_move: {type_id: 0, type: 'Moving products', onlyStorageId: CONFIG.altegio.storageId, onlyStatus: ['create']},
     record: {onlyStatus: 'update', onlyPaidFull: 1}
   };
 
@@ -68,11 +71,13 @@ app.post('/webhook', async (req, res) => {
     error: false,
     done: false,
     get rule() {
-      return this.rules[req.body.resource];
+      return this.rules[this.input?.resource];
     }
   };
 
   const pipeline = [
+    validateWebhookPayloadStep,
+    enforceIdempotencyStep,
     validateRulesStep,
     getProductIdsStep
   ];
@@ -90,16 +95,16 @@ app.post('/webhook', async (req, res) => {
   }
 
   if (ctx.error) {
-    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body)});
+    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body), correlation_id: ctx.correlationId});
     return res.status(400).json({error: true, message: ctx.log.reason});
   }
 
   if (ctx.done) {
-    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body)});
+    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body), correlation_id: ctx.correlationId});
     return res.status(200).json({status: ctx.log.status, message: ctx.log.reason});
   }
 
-  CacheManager.logWebhook({status: 'success', type: 'hook', json: JSON.stringify(req.body)});
+  CacheManager.logWebhook({status: 'success', type: 'hook', json: JSON.stringify(req.body), correlation_id: ctx.correlationId});
   addIdsToQueue(ctx.state.product_ids);
 
   return res.json(ctx.state);
@@ -109,7 +114,7 @@ app.post('/webhook', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
 
-  if (process.env.WARMUP_ON_START === 'true') {
+  if (CONFIG.server.warmupOnStart) {
     setTimeout(() => {
       useStore().getShopifyInventoryIdsBySku()
         .then(() => console.log('Cashing done.'))
