@@ -1,14 +1,15 @@
 import { GraphQLClient } from 'graphql-request';
 import { useUtils } from '../utils/index.js';
 import { CacheManager } from '../store/cache.manager.js';
+import { CONFIG } from '../utils/config.js';
 
 const {sleep} = useUtils();
 
-const version = process.env.SF_API_VERSION;
-const domain = process.env.SF_DOMAIN;
+const version = CONFIG.shopify.apiVersion;
+const domain = CONFIG.shopify.domain;
 const url = `https://${domain}/admin/api/${version}/graphql.json`;
-const accessToken = process.env.SF_ADMIN_ACCESS_TOKEN;
-const locationId = process.env.SF_CONST_LOCATION_ID;
+const accessToken = CONFIG.shopify.adminAccessToken;
+const locationId = CONFIG.shopify.locationId;
 
 const shopify = new GraphQLClient(url, {
   headers: {
@@ -130,7 +131,15 @@ export async function getInventoryItemById(inventoryItemId) {
   }
 }
 
-export async function setAbsoluteQuantity(inventoryItemId, quantity) {
+export async function setAbsoluteQuantity(inventoryItemId, quantity, context = {}) {
+  const safeQuantity = Number.isFinite(quantity) ? Number(quantity) : null;
+  if (safeQuantity === null || safeQuantity < 0) {
+    const detail = safeQuantity === null ? 'Missing quantity' : 'Negative quantity';
+    const error = new Error(`${detail} for inventory item ${inventoryItemId}`);
+    console.error(error.message, { inventoryItemId, quantity });
+    throw error;
+  }
+
   const mutation = `
     mutation InventorySet($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) {
@@ -158,7 +167,7 @@ export async function setAbsoluteQuantity(inventoryItemId, quantity) {
         {
           inventoryItemId,
           locationId,
-          quantity
+          quantity: safeQuantity
         },
       ],
     },
@@ -167,10 +176,17 @@ export async function setAbsoluteQuantity(inventoryItemId, quantity) {
   try {
     const result = await requestWithThrottle(mutation, variables);
     if (result.inventorySetQuantities.userErrors?.length > 0) {
-      throw new Error('Shopify returned userErrors');
+      const details = JSON.stringify(result.inventorySetQuantities.userErrors);
+      const err = new Error(`Shopify returned userErrors: ${details}`);
+      console.error('Failed to set quantity:', { inventoryItemId, safeQuantity, context, details });
+      throw err;
     }
   } catch (e) {
-    console.error('Failed to set quantity:', JSON.stringify(e.response?.errors[0]?.extensions, null, 2) || e.message);
+    console.error('Failed to set quantity:', JSON.stringify(e.response?.errors?.[0]?.extensions, null, 2) || e.message, {
+      inventoryItemId,
+      quantity: safeQuantity,
+      context,
+    });
     throw e;
   }
 }

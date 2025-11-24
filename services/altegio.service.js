@@ -1,9 +1,5 @@
 import axios from 'axios'
-
-// Допоміжне зчитування токенів: спершу шукаємо правильні ALTEGIO_*,
-// але підтримуємо й попереднє написання ALTEGION_* щоб не ламати оточення.
-const partnerToken = process.env.ALTEGIO_TOKEN ?? process.env.ALTEGION_TOKEN
-const userToken = process.env.ALTEGIO_USER_TOKEN ?? process.env.ALTEGION_USER_TOKEN
+import { CONFIG } from '../utils/config.js'
 
 export async function fetchProduct(companyId, productId) {
   try {
@@ -11,7 +7,7 @@ export async function fetchProduct(companyId, productId) {
       `https://api.alteg.io/api/v1/goods/${companyId}/${productId}`,
       {
         headers: {
-          'Authorization': `Bearer ${partnerToken}, User ${userToken}`,
+          'Authorization': `Bearer ${CONFIG.altegio.partnerToken}, User ${CONFIG.altegio.userToken}`,
           Accept: 'application/vnd.api.v2+json'
         }
       }
