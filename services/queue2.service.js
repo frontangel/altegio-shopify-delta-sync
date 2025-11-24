@@ -5,7 +5,7 @@ import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js';
 import { CacheManager } from '../store/cache.manager.js';
 import { CONFIG } from '../utils/config.js';
-import { getRedisClient, redisQueueAvailable } from '../store/redis.client.js';
+import { getRedisClient, markRedisFallback, redisQueueAvailable } from '../store/redis.client.js';
 
 const queueSet = new Set();
 const retryCounts = new Map();
@@ -54,10 +54,12 @@ async function pullNextId() {
       return { goodId, usingRedis: true };
     } catch (err) {
       console.warn(`⚠️ Unable to pull from Redis queue: ${err.message}`);
+      markRedisFallback(err.message);
     }
   }
 
   if (queueSet.size === 0) {
+    markRedisFallback('Redis unavailable while draining queue');
     return { goodId: null, usingRedis: false };
   }
 
@@ -103,6 +105,7 @@ export async function addIdsToQueue(ids) {
   const idArray = Array.isArray(ids) ? ids : [ids];
 
   if (redisQueueAvailable()) {
+    let persistedToDisk = false;
     for (const id of idArray) {
       try {
         const alreadyQueued = await redis.sismember(redisKeys.set, id);
@@ -110,15 +113,23 @@ export async function addIdsToQueue(ids) {
         await redis.multi().sadd(redisKeys.set, id).rpush(redisKeys.pending, id).exec();
       } catch (err) {
         console.warn(`⚠️ Failed to enqueue ${id} in Redis, falling back to disk: ${err.message}`);
+        markRedisFallback(err.message);
         queueSet.add(id);
+        persistedToDisk = true;
       }
     }
     if (!redisQueueAvailable()) {
+      markRedisFallback('Redis became unavailable during enqueue');
+      persistQueue();
+      return;
+    }
+    if (persistedToDisk) {
       persistQueue();
     }
     return;
   }
 
+  markRedisFallback('Redis queue unavailable; enqueuing on disk');
   idArray.forEach((id) => queueSet.add(id));
   persistQueue();
 }
@@ -208,4 +219,14 @@ async function handleGoodId(goodId, ctx) {
   });
 }
 
-setInterval(processNextId, 2000);
+export function __resetQueueForTests() {
+  queueSet.clear();
+  retryCounts.clear();
+  if (fs.existsSync(QUEUE_FILE)) {
+    fs.unlinkSync(QUEUE_FILE);
+  }
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(processNextId, 2000);
+}
