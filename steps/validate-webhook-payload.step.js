@@ -1,17 +1,9 @@
 import { z } from 'zod';
 import { CONFIG } from '../utils/config.js';
 
-const resourceSchema = z.enum([
-  'goods_operations_sale',
-  'goods_operations_receipt',
-  'goods_operations_stolen',
-  'goods_operations_move',
-  'record',
-]);
-
 const baseSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
-  resource: resourceSchema,
+  resource: z.string().min(1),
   status: z.string(),
   data: z.object({
     type: z.string().optional(),

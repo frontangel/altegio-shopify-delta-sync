@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
 import { CONFIG } from './utils/config.js';
+import { recordDeadLetter } from './store/dead-letter.store.js';
 
 const PORT = CONFIG.server.port;
 const __filename = fileURLToPath(import.meta.url);
@@ -96,11 +97,29 @@ app.post('/webhook', async (req, res) => {
 
   if (ctx.error) {
     CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body), correlation_id: ctx.correlationId});
+    recordDeadLetter({
+      status: ctx.log.status,
+      reason: ctx.log.reason,
+      correlation_id: ctx.correlationId,
+      resource: ctx.input?.resource,
+      retryable: ctx.log.retryable ?? false,
+      payload: req.body,
+    });
     return res.status(400).json({error: true, message: ctx.log.reason});
   }
 
   if (ctx.done) {
     CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body), correlation_id: ctx.correlationId});
+    if (ctx.log.status === 'unknown_resource') {
+      recordDeadLetter({
+        status: ctx.log.status,
+        reason: ctx.log.reason,
+        correlation_id: ctx.correlationId,
+        resource: ctx.input?.resource,
+        retryable: false,
+        payload: req.body,
+      });
+    }
     return res.status(200).json({status: ctx.log.status, message: ctx.log.reason});
   }
 

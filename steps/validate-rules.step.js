@@ -1,6 +1,21 @@
 import { CONFIG } from '../utils/config.js';
 
+const allowedResources = new Set([
+  'goods_operations_sale',
+  'goods_operations_receipt',
+  'goods_operations_stolen',
+  'goods_operations_move',
+  'record',
+]);
+
 export function validateRulesStep(ctx) {
+  if (!allowedResources.has(ctx.input.resource)) {
+    ctx.log.status = 'unknown_resource'
+    ctx.log.reason = `Skip: unsupported resource ${ctx.input.resource}`
+    ctx.done = true
+    return
+  }
+
   if (!ctx.rule) {
     ctx.log.status = 'skipped'
     ctx.log.reason = 'Skip by undefined rule'
