@@ -97,6 +97,8 @@ Create a .env file in the project root and set the variables listed below. The a
   - yarn start:dev
   - or: npm run start:dev
 
+For a short Ukrainian quickstart guide, see [USAGE-UK.md](USAGE-UK.md).
+
 ---
 
 ## Environment variables
