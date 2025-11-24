@@ -106,6 +106,7 @@ The utils/config.js file defines and validates environment variables. Required o
 Server:
 - PORT (optional, int) – HTTP port, default 3000
 - WARMUP_ON_START (optional, string 'true'|'false') – when 'true', warms cache after start
+- SKU_REFRESH_INTERVAL_MS (optional, int) – how often to refresh Shopify SKU cache; default 900000 (15 minutes). Set to 0 to disable.
 
 Altegio:
 - ALTEGIO_COMPANY_ID (required, int)
@@ -157,6 +158,7 @@ Queue behavior:
 
 Warmup:
 - If WARMUP_ON_START='true', after startup the service attempts to preload Shopify products/variants into the cache for faster SKU→inventory lookups
+- The cache refreshes periodically every SKU_REFRESH_INTERVAL_MS (default 15 minutes) to pick up newly created Shopify variants
 
 Basic auth:
 - If BASIC_AUTH_USER and BASIC_AUTH_PASS are set, internal routes (/db, /sku, /logs) require HTTP Basic authentication

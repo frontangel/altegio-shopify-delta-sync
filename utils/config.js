@@ -36,6 +36,7 @@ const optionalInt = () =>
 const envSchema = z.object({
   PORT: optionalInt(),
   WARMUP_ON_START: z.string().optional(),
+  SKU_REFRESH_INTERVAL_MS: optionalInt(),
 
   ALTEGIO_COMPANY_ID: positiveInt('ALTEGIO_COMPANY_ID'),
   ALTEGIO_STORAGE_ID: positiveInt('ALTEGIO_STORAGE_ID'),
@@ -68,6 +69,7 @@ export const CONFIG = {
   server: {
     port: env.PORT ?? 3000,
     warmupOnStart: env.WARMUP_ON_START === 'true',
+    refreshIntervalMs: env.SKU_REFRESH_INTERVAL_MS ?? 15 * 60 * 1000,
   },
   altegio: {
     companyId: env.ALTEGIO_COMPANY_ID,
