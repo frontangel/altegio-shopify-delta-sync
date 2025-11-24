@@ -1,9 +1,20 @@
 import { useStore } from './useStore.js';
+import { CONFIG } from '../utils/config.js';
 
 const { getShopifyInventoryIdsBySku } = useStore()
 const skuMapper = new Map()
 const articleMapper = new Map()
-const notFoundCache = new Set()
+const notFoundCache = new Map()
+const webhookEventCache = new Map()
+
+// Тривалість кешу для «не знайдених» SKU (мс)
+const NOT_FOUND_TTL_MS = 10 * 60 * 1000;
+
+function isNotFoundCacheFresh(sku) {
+  if (!notFoundCache.has(sku)) return false;
+  const lastMiss = notFoundCache.get(sku);
+  return Date.now() - lastMiss < NOT_FOUND_TTL_MS;
+}
 
 const MAX_LOGS = 5000;
 
@@ -12,6 +23,7 @@ export const CacheManager = {
   articleMapper,
   notFoundCache,
   webhookLogs: [],
+  webhookEventCache,
   updateLogById(entry) {
     const log = this.webhookLogs.find(l => l._id === entry._id);
     if (!log) return false
@@ -30,12 +42,30 @@ export const CacheManager = {
   shopifySkuInventory: () => Object.fromEntries(skuMapper),
   altegioArticleShopifySky: () => Object.fromEntries(articleMapper),
   inventoryItemIdByAltegioSku: async (altegioSku) => {
-    if (!skuMapper.has(altegioSku)) {
-      await getShopifyInventoryIdsBySku()
-    }
     if (skuMapper.has(altegioSku)) return CacheManager.skuMapper.get(altegioSku)
-    if (notFoundCache.has(altegioSku)) return null
-    CacheManager.notFoundCache.add(altegioSku)
+
+    // Якщо SKU раніше не знаходили і кеш ще свіжий — не спамимо Shopify зайвими запитами
+    if (isNotFoundCacheFresh(altegioSku)) return null
+
+    await getShopifyInventoryIdsBySku()
+
+    if (skuMapper.has(altegioSku)) return CacheManager.skuMapper.get(altegioSku)
+
+    // Кешуємо промах лише з позначкою часу, щоб через деякий час перевірити знову
+    CacheManager.notFoundCache.set(altegioSku, Date.now())
     return null
+  },
+  rememberEvent(eventId, ttlMs = CONFIG.webhook.idempotencyTtlMs) {
+    webhookEventCache.set(String(eventId), Date.now() + ttlMs);
+    this.cleanupEvents();
+  },
+  isDuplicateEvent(eventId) {
+    this.cleanupEvents();
+    return webhookEventCache.has(String(eventId));
+  },
+  cleanupEvents(now = Date.now()) {
+    for (const [id, expiresAt] of webhookEventCache.entries()) {
+      if (expiresAt <= now) webhookEventCache.delete(id);
+    }
   }
 }

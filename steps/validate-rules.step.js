@@ -1,3 +1,5 @@
+import { CONFIG } from '../utils/config.js';
+
 export function validateRulesStep(ctx) {
   if (!ctx.rule) {
     ctx.log.status = 'skipped'
@@ -35,9 +37,15 @@ export function validateRulesStep(ctx) {
     ctx.done = true
   }
 
-  if (!ctx.done && ctx.rule.onlyStorageId && ctx.rule.onlyStorageId !== ctx.input.data.storage.id) {
+  if (!ctx.done && ctx.rule.onlyStorageId && ctx.rule.onlyStorageId !== ctx.input.data.storage?.id) {
     ctx.log.status = 'skipped'
     ctx.log.reason = 'Skip by storageId'
+    ctx.done = true
+  }
+
+  if (!ctx.done && ctx.input.data.storage?.id && ctx.input.data.storage.id !== CONFIG.altegio.storageId) {
+    ctx.log.status = 'skipped'
+    ctx.log.reason = `Skip by unexpected storageId: ${ctx.input.data.storage.id}`
     ctx.done = true
   }
 }
