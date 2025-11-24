@@ -1,83 +1,145 @@
-# 🛒 Altegio → Shopify Sync Service
+# Altegio → Shopify Sync Service
 
-Цей проєкт приймає вебхуки з [Altegio](https://altegio.com/) та оновлює залишки товарів у [Shopify](https://shopify.com) за відповідним SKU.
+This service receives webhooks from Altegio and synchronizes inventory quantities in Shopify by matching products via SKU.
 
----
-
-## ⚙️ Опис
-
-Це мінімалістичний Node.js сервіс, який:
-
-- ✅ Приймає webhook'и типу `goods_operations_sale` з Altegio
-- ✅ Визначає відповідний товар у Shopify за артикулом (SKU)
-- ✅ Оновлює кількість товару в Shopify через GraphQL API
-- ✅ Використовує локальне кешування даних без бази даних
-- ✅ Має **примітивну чергу** для уникнення Shopify API rate-limit
-- ✅ Працює з фіксованим `LocationId`, переданим через `.env`
+The repository uses Node.js (ESM) with Express and Shopify GraphQL API. It keeps a lightweight in-memory cache and a simple background queue to smooth out Shopify API rate limits.
 
 ---
 
-## 📦 Стек
+## Overview
 
-- Node.js + Express
-- `graphql-request` для запитів до Shopify
-- `dotenv` для конфігурації
-- Простий `queue.service.js` на `setInterval` без сторонніх бібліотек
-- Кешування в памʼяті (через `CacheManager`)
+What it does:
+
+- Receives Altegio webhooks (e.g., goods operations) and validates payloads
+- Maps Altegio articles (SKU) to Shopify variant inventory items
+- Updates Shopify inventory quantities via GraphQL Admin API
+- Persists a small in-memory cache and minimal queue (with backoff and disk persistence)
+- Provides basic internal endpoints for health, cache inspection, and logs
 
 ---
 
-## 📁 Структура проєкту
+## Stack
+
+- Runtime: Node.js (>= 20, ESM)
+- Web framework: Express 5
+- Templates: EJS (for simple logs UI)
+- Shopify API: graphql-request
+- Validation: zod
+- Config loader: dotenv
+- Caching/State: in-memory via CacheManager
+
+Package manager: Yarn is present (yarn.lock), but npm also works. Use one consistently.
+
+Entry point: index.js
+
+Scripts (package.json):
+- start: node index.js
+- start:dev: nodemon index.js
+
+---
+
+## Requirements
+
+- Node.js 20 or newer
+- Shopify Admin API access token and store domain
+- Altegio company/storage IDs and tokens
+
+---
+
+## Project structure
 ```
 .
-├── .env                  # Змінні середовища
-├── index.js              # Точка входу
+├── index.js                      # Application entry point (Express server)
+├── utils/
+│   ├── config.js                 # Env validation and CONFIG aggregation (zod)
+│   └── index.js                  # Helpers (formatting, sleep, logs formatting)
+├── middleware/
+│   ├── baseAuth.middleware.js    # Basic auth guard for internal routes
+│   └── waitReady.middleware.js   # Blocks access until cache is warm
 ├── services/
-│   ├── shopify.service.js      # Shopify API запити
-│   └── queue.service.js        # Черга для контролю частоти запитів
+│   ├── altegio.service.js        # Altegio API client
+│   ├── shopify.service.js        # Shopify GraphQL client + inventory ops
+│   └── queue2.service.js         # Minimal persistent queue with backoff
+├── steps/                        # Request pipeline steps for webhook processing
 ├── store/
-│   ├── useStore.js             # Алгоритм мапінгу SKU
-│   └── cache.manager.js        # Примітивний кеш у памʼяті
+│   ├── cache.manager.js          # In-memory cache, logs storage
+│   └── useStore.js               # SKU mapping, preload Shopify inventory
+├── views/
+│   └── logs.ejs                  # Logs page
+└── package.json
 ```
+
+Note: Earlier docs mentioned queue.service.js; the current implementation lives in services/queue2.service.js.
 
 ---
 
-## 🧪 Запуск локально
+## Setup
 
-### 1. Встановлення
+1) Install dependencies
 
-```bash
-npm install
-```
+- with Yarn
+  - yarn install
 
-### 2. Налаштування `.env`
+- with npm
+  - npm install
 
-```env
-SF_API_VERSION=2025-04
-SF_DOMAIN=your-store.myshopify.com
-SF_ADMIN_ACCESS_TOKEN=shpat_xxxxx
-SF_CONST_LOCATION_ID=gid://shopify/Location/123456789
-PORT=3000
-```
+2) Configure environment
 
-### 3. Запуск
+Create a .env file in the project root and set the variables listed below. The app validates envs using zod and provides a few fallbacks.
 
-```bash
-npm start
-```
+3) Run
+
+- Production-like
+  - yarn start
+  - or: npm start
+
+- Development (auto-restart with nodemon)
+  - yarn start:dev
+  - or: npm run start:dev
 
 ---
 
-## 🔄 Webhook
+## Environment variables
 
-Очікується POST-запит від Altegio на:
+The utils/config.js file defines and validates environment variables. Required ones must be set; optional ones have defaults or may be omitted.
 
+Server:
+- PORT (optional, int) – HTTP port, default 3000
+- WARMUP_ON_START (optional, string 'true'|'false') – when 'true', warms cache after start
+
+Altegio:
+- ALTEGIO_COMPANY_ID (required, int)
+- ALTEGIO_STORAGE_ID (required, int)
+- ALTEGIO_TOKEN (required, string) – partner token; also accepts ALTEGION_TOKEN as fallback
+- ALTEGIO_USER_TOKEN (required, string) – user token; also accepts ALTEGION_USER_TOKEN as fallback
+
+Shopify:
+- SF_API_VERSION (required, string) – e.g., 2025-04
+- SF_DOMAIN (required, string) – your-store.myshopify.com
+- SF_ADMIN_ACCESS_TOKEN (required, string)
+- SF_CONST_LOCATION_ID (required, string) – Shopify Location GID
+
+Security (basic auth for internal routes):
+- BASIC_AUTH_USER (optional, string)
+- BASIC_AUTH_PASS (optional, string)
+
+Webhook/idempotency/queue:
+- IDEMPOTENCY_TTL_MS (optional, int) – default 300000 (5 minutes)
+- QUEUE_BACKOFF_BASE_MS (optional, int) – default 1500 ms
+
+---
+
+## Running and usage
+
+Endpoints:
+- GET /healthz – returns ok, readiness flag, and cache size
+- GET /logs – HTML page with recent logs (basic auth protected)
+- GET /db – JSON dump of cache (basic auth protected)
+- GET /sku?sku=... – resolves Shopify inventoryItemId by SKU (basic auth protected)
+- POST /webhook – main Altegio integration entry
+
+Example webhook payload (shape may vary by resource):
 ```
-POST /webhook
-```
-
-Приклад тіла запиту:
-```json
 {
   "resource": "goods_operations_sale",
   "company_id": 12345,
@@ -88,62 +150,56 @@ POST /webhook
 }
 ```
 
----
+Queue behavior:
+- Incoming product IDs are added to a persistent Set backed by store/pending-queue.json
+- A background interval processes one item at a time with exponential backoff on errors
+- Quantities are updated in Shopify for the configured SF_CONST_LOCATION_ID
 
-## 🔁 Черга
+Warmup:
+- If WARMUP_ON_START='true', after startup the service attempts to preload Shopify products/variants into the cache for faster SKU→inventory lookups
 
-Завдання (наприклад, оновити залишок) не виконуються одразу, а ставляться в чергу (`queue.service.js`) і виконуються **по одному кожну секунду** для уникнення Shopify Throttle (`Throttled`).
-
----
-
-## 📥 Ендпоінти
-
-- `GET /sku?sku=123456` – отримає inventoryItemId за SKU
-- `GET /db` – віддає поточний кеш SKU ↔ inventoryID
-- `POST /webhook` – головна точка інтеграції з Altegio
+Basic auth:
+- If BASIC_AUTH_USER and BASIC_AUTH_PASS are set, internal routes (/db, /sku, /logs) require HTTP Basic authentication
 
 ---
 
-## 🛑 Обмеження
+## Scripts
 
-- Немає бази даних (тільки кеш у памʼяті)
-- Примітивна черга без retry-логіки
-- Працює тільки з одним `LocationId`
-
----
-
-## 🔐 Безпека
-
-### 🔐 Basic Auth для доступу до внутрішніх endpoint'ів
-
-Маршрути `/db` і `/sku` захищені базовою авторизацією (Basic Auth).
-
-У `.env` необхідно вказати:
-
-```env
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASS=mystrongpassword
-```
-
-Тестовий запит:
-
-```bash
-curl -u admin:mystrongpassword https://your-app.up.railway.app/db
-```
+- yarn start / npm start – start the server
+- yarn start:dev / npm run start:dev – start with nodemon for development
 
 ---
 
-## 📌 Плани на майбутнє
+## Tests
 
-- Додати збереження кешу у Redis або MongoDB
-- Розширити підтримку інших типів webhook'ів
-- Додати retry для помилок типу `Throttled` чи `5xx`
-- Підтримка кількох компаній / локацій (multi-tenant)
+No tests are present in the repository at this time.
+- TODO: Add unit tests for utils and services
+- TODO: Add integration tests for webhook processing pipeline
 
 ---
 
+## Project status and limitations
 
+- No external database; cache is in-memory with minimal disk persistence for the queue
+- Single Shopify location supported (via SF_CONST_LOCATION_ID)
+- Rate-limit handling is basic; retries and backoff exist in queue2.service.js, but end-to-end robustness may be improved
 
-## 👤 Автор
-Розроблено **Frontangel**.  
-Запитання чи пропозиції? Напиши в [Telegram](https://t.me/frontangel) або [GitHub Issues](https://github.com/frontangel/altegio-shopify-delta-sync/issues).
+Planned enhancements (ideas):
+- Persist cache in Redis or a database
+- Support additional Altegio webhook types
+- Improve retry policies (throttled/5xx)
+- Multi-tenant support (multiple companies/locations)
+
+---
+
+## License
+
+No license file detected.
+- TODO: Add a LICENSE file and specify licensing terms
+
+---
+
+## Author / Support
+
+Originally developed by Frontangel.
+For questions or suggestions, you may open an issue in the project’s tracker.
