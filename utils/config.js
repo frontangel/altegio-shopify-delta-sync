@@ -1,26 +1,44 @@
 import { z } from 'zod';
 
-const requiredInt = (name) =>
-  z
-    .string({ required_error: `${name} is required` })
-    .trim()
-    .regex(/^\d+$/, `${name} must be a positive integer`)
-    .transform((val) => Number(val));
+const normalizeMaybeNumber = (value) => {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return value.trim();
+  return value;
+};
+
+const positiveInt = (name, { required = true } = {}) => {
+  const base = z
+    .preprocess(normalizeMaybeNumber, required ? z.string({ required_error: `${name} is required` }) : z.string().optional())
+    .transform((val) => {
+      if (val === undefined) return val;
+      const num = typeof val === 'number' ? val : Number(val);
+      return num;
+    })
+    .refine((val) => val === undefined || (Number.isInteger(val) && val > 0), {
+      message: `${name} must be a positive integer`,
+    });
+
+  return required ? base : base.optional();
+};
 
 const optionalInt = () =>
   z
-    .string()
-    .trim()
-    .regex(/^\d+$/)
-    .transform((val) => Number(val))
-    .optional();
+    .preprocess(normalizeMaybeNumber, z.string().optional())
+    .transform((val) => {
+      if (val === undefined) return val;
+      const num = typeof val === 'number' ? val : Number(val);
+      return num;
+    })
+    .refine((val) => val === undefined || (Number.isInteger(val) && val >= 0), {
+      message: `Value must be a non-negative integer`,
+    });
 
 const envSchema = z.object({
   PORT: optionalInt(),
   WARMUP_ON_START: z.string().optional(),
 
-  ALTEGIO_COMPANY_ID: requiredInt('ALTEGIO_COMPANY_ID'),
-  ALTEGIO_STORAGE_ID: requiredInt('ALTEGIO_STORAGE_ID'),
+  ALTEGIO_COMPANY_ID: positiveInt('ALTEGIO_COMPANY_ID'),
+  ALTEGIO_STORAGE_ID: positiveInt('ALTEGIO_STORAGE_ID'),
   ALTEGIO_TOKEN: z.string().min(1),
   ALTEGIO_USER_TOKEN: z.string().min(1),
 
@@ -34,6 +52,8 @@ const envSchema = z.object({
 
   IDEMPOTENCY_TTL_MS: optionalInt(),
   QUEUE_BACKOFF_BASE_MS: optionalInt(),
+  REDIS_URL: z.string().url().optional(),
+  QUEUE_REDIS_NAMESPACE: z.string().min(1).optional(),
 });
 
 const envWithFallbacks = {
@@ -66,5 +86,7 @@ export const CONFIG = {
   },
   queue: {
     backoffBaseMs: env.QUEUE_BACKOFF_BASE_MS ?? 1500,
+    redisUrl: env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+    redisNamespace: env.QUEUE_REDIS_NAMESPACE ?? 'altegio:shopify:queue',
   },
 };

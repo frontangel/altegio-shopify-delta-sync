@@ -5,10 +5,18 @@ import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js'
 import { CacheManager } from '../store/cache.manager.js';
 import { CONFIG } from '../utils/config.js';
+import { getRedisClient, redisQueueAvailable } from '../store/redis.client.js';
 
 const queueSet = new Set();
 const retryCounts = new Map();
 let isProcessing = false;
+
+const redis = getRedisClient();
+const redisKeys = {
+  set: `${CONFIG.queue.redisNamespace}:queued`,
+  pending: `${CONFIG.queue.redisNamespace}:pending`,
+  processing: `${CONFIG.queue.redisNamespace}:processing`,
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,42 +46,112 @@ function persistQueue() {
 
 loadQueueFromDisk();
 
-export function addIdsToQueue(ids) {
-  const idArray = Array.isArray(ids) ? ids : [ids]
-  idArray.forEach(id => queueSet.add(id))
-  persistQueue();
-}
+async function pullNextId() {
+  if (redisQueueAvailable()) {
+    try {
+      const goodId = await redis.rpoplpush(redisKeys.pending, redisKeys.processing);
+      if (!goodId) return { goodId: null, usingRedis: true };
+      return { goodId, usingRedis: true };
+    } catch (err) {
+      console.warn(`⚠️ Unable to pull from Redis queue: ${err.message}`);
+    }
+  }
 
-export async function processNextId() {
-  if (isProcessing || queueSet.size === 0) return;
+  if (queueSet.size === 0) {
+    return { goodId: null, usingRedis: false };
+  }
 
-  isProcessing = true;
   const iterator = queueSet.values();
   const goodId = iterator.next().value;
   queueSet.delete(goodId);
   persistQueue();
+  return { goodId, usingRedis: false };
+}
 
-  const ctx = {
-    altegio_sku: '',
-    quantity: null,
-    storage_id: CONFIG.altegio.storageId,
+async function finalizeSuccess(goodId, usingRedis) {
+  if (usingRedis && redisQueueAvailable()) {
+    try {
+      await redis.multi().lrem(redisKeys.processing, 0, goodId).srem(redisKeys.set, goodId).exec();
+      return;
+    } catch (err) {
+      console.warn(`⚠️ Unable to finalize Redis task ${goodId}: ${err.message}`);
+    }
   }
 
-  try {
-    await handleGoodId(goodId, ctx);
-    retryCounts.delete(goodId);
-  } catch (err) {
-    const nextAttempt = (retryCounts.get(goodId) ?? 0) + 1;
-    retryCounts.set(goodId, nextAttempt);
+  queueSet.delete(goodId);
+  persistQueue();
+}
 
-    CacheManager.logWebhook({ status: 'error', reason: err.message, type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
-    console.error('❌ Task failed:', err.message);
+function scheduleRetry(goodId, delay, usingRedis) {
+  setTimeout(async () => {
+    if (usingRedis && redisQueueAvailable()) {
+      try {
+        await redis.lrem(redisKeys.processing, 0, goodId);
+        await redis.rpush(redisKeys.pending, goodId);
+        return;
+      } catch (err) {
+        console.warn(`⚠️ Unable to requeue ${goodId} in Redis: ${err.message}`);
+      }
+    }
 
-    const delay = Math.min(30000, CONFIG.queue.backoffBaseMs * Math.pow(2, nextAttempt));
-    setTimeout(() => {
-      queueSet.add(goodId);
+    queueSet.add(goodId);
+    persistQueue();
+  }, delay);
+}
+
+export async function addIdsToQueue(ids) {
+  const idArray = Array.isArray(ids) ? ids : [ids];
+
+  if (redisQueueAvailable()) {
+    for (const id of idArray) {
+      try {
+        const alreadyQueued = await redis.sismember(redisKeys.set, id);
+        if (alreadyQueued) continue;
+        await redis.multi().sadd(redisKeys.set, id).rpush(redisKeys.pending, id).exec();
+      } catch (err) {
+        console.warn(`⚠️ Failed to enqueue ${id} in Redis, falling back to disk: ${err.message}`);
+        queueSet.add(id);
+      }
+    }
+    if (!redisQueueAvailable()) {
       persistQueue();
-    }, delay);
+    }
+    return;
+  }
+
+  idArray.forEach((id) => queueSet.add(id));
+  persistQueue();
+}
+
+export async function processNextId() {
+  if (isProcessing) return;
+
+  isProcessing = true;
+
+  try {
+    const { goodId, usingRedis } = await pullNextId();
+    if (!goodId) return;
+
+    const ctx = {
+      altegio_sku: '',
+      quantity: null,
+      storage_id: CONFIG.altegio.storageId,
+    };
+
+    try {
+      await handleGoodId(goodId, ctx);
+      retryCounts.delete(goodId);
+      await finalizeSuccess(goodId, usingRedis);
+    } catch (err) {
+      const nextAttempt = (retryCounts.get(goodId) ?? 0) + 1;
+      retryCounts.set(goodId, nextAttempt);
+
+      CacheManager.logWebhook({ status: 'error', reason: err.message, type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+      console.error('❌ Task failed:', err.message);
+
+      const delay = Math.min(30000, CONFIG.queue.backoffBaseMs * Math.pow(2, nextAttempt));
+      scheduleRetry(goodId, delay, usingRedis);
+    }
   } finally {
     isProcessing = false;
   }
