@@ -14,6 +14,7 @@ import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
 import { CONFIG } from './utils/config.js';
 import { recordDeadLetter } from './store/dead-letter.store.js';
+import { syncAllStocks } from './services/full-sync.service.js';
 
 const PORT = CONFIG.server.port;
 const __filename = fileURLToPath(import.meta.url);
@@ -24,7 +25,7 @@ app.use(express.json());
 
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
-app.use(['/sku', '/db', '/logs'], basicAuthMiddleware, waitUntilReady);
+app.use(['/sku', '/db', '/logs', '/sync/all'], basicAuthMiddleware, waitUntilReady);
 
 app.get('/healthz', (req, res) => {
   const { isReady } = useStore();
@@ -47,6 +48,16 @@ app.get('/db', async (req, res) => {
 app.get('/sku', async (req, res) => {
   const shopifyInventoryId = await CacheManager.inventoryItemIdByAltegioSku(req.query.sku);
   return res.json({shopifyInventoryId});
+});
+
+app.post('/sync/all', async (req, res) => {
+  try {
+    const { queued, total } = await syncAllStocks();
+    return res.json({ queued, total });
+  } catch (error) {
+    console.error('❌ Full sync failed:', error.message);
+    return res.status(500).json({ error: true, message: error.message || 'Full sync failed' });
+  }
 });
 
 app.post('/webhook', async (req, res) => {
