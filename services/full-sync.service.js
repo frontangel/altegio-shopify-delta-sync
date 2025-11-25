@@ -45,11 +45,12 @@ export async function collectGoodsForFullSync() {
 
   while (page <= MAX_PAGES) {
     const pagePayload = await fetchProductsPage(CONFIG.altegio.companyId, { page, count: PAGE_SIZE });
-    const goods = filterGoodsForStorage(extractGoodsArray(pagePayload), CONFIG.altegio.storageId);
+    const rawGoods = extractGoodsArray(pagePayload);
+    const goods = filterGoodsForStorage(rawGoods, CONFIG.altegio.storageId);
 
     goods.forEach((good) => uniqueIds.add(good.id));
 
-    if (goods.length < PAGE_SIZE) break;
+    if (rawGoods.length < PAGE_SIZE) break;
     page += 1;
   }
 
