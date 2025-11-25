@@ -14,7 +14,7 @@ import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
 import { CONFIG } from './utils/config.js';
 import { recordDeadLetter } from './store/dead-letter.store.js';
-import { syncAllStocks } from './services/full-sync.service.js';
+import { isFullSyncInProgress, syncAllStocks } from './services/full-sync.service.js';
 
 const PORT = CONFIG.server.port;
 const __filename = fileURLToPath(import.meta.url);
@@ -52,6 +52,10 @@ app.get('/sku', async (req, res) => {
 
 app.post('/sync/all', async (req, res) => {
   try {
+    if (isFullSyncInProgress()) {
+      return res.status(409).json({ error: true, message: 'Full sync is already in progress' });
+    }
+
     const { queued, total } = await syncAllStocks();
     return res.json({ queued, total });
   } catch (error) {

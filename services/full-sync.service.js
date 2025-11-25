@@ -4,6 +4,7 @@ import { fetchProductsPage } from './altegio.service.js';
 
 const PAGE_SIZE = 200;
 const MAX_PAGES = 500; // safety guard
+let fullSyncPromise = null;
 
 function extractGoodsArray(payload) {
   const candidates = [
@@ -49,12 +50,26 @@ export async function collectGoodsForFullSync() {
   return [...uniqueIds];
 }
 
-export async function syncAllStocks() {
-  const goodIds = await collectGoodsForFullSync();
-  if (goodIds.length === 0) {
-    return { queued: 0, total: 0 };
-  }
+export function isFullSyncInProgress() {
+  return Boolean(fullSyncPromise);
+}
 
-  await addIdsToQueue(goodIds);
-  return { queued: goodIds.length, total: goodIds.length };
+export async function syncAllStocks() {
+  if (fullSyncPromise) return fullSyncPromise;
+
+  fullSyncPromise = (async () => {
+    const goodIds = await collectGoodsForFullSync();
+    if (goodIds.length === 0) {
+      return { queued: 0, total: 0 };
+    }
+
+    await addIdsToQueue(goodIds);
+    return { queued: goodIds.length, total: goodIds.length };
+  })();
+
+  try {
+    return await fullSyncPromise;
+  } finally {
+    fullSyncPromise = null;
+  }
 }
