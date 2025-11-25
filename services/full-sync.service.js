@@ -1,10 +1,16 @@
-import { addIdsToQueue } from './queue2.service.js';
+import { addIdsToQueue, getQueueMetrics } from './queue2.service.js';
 import { CONFIG } from '../utils/config.js';
 import { fetchProductsPage } from './altegio.service.js';
 
 const PAGE_SIZE = 200;
 const MAX_PAGES = 500; // safety guard
 let fullSyncPromise = null;
+let fullSyncState = {
+  active: false,
+  total: 0,
+  startedAt: null,
+  completedAt: null,
+};
 
 function extractGoodsArray(payload) {
   const candidates = [
@@ -59,6 +65,13 @@ export async function syncAllStocks() {
 
   fullSyncPromise = (async () => {
     const goodIds = await collectGoodsForFullSync();
+    fullSyncState = {
+      active: goodIds.length > 0,
+      total: goodIds.length,
+      startedAt: goodIds.length > 0 ? new Date().toISOString() : null,
+      completedAt: null,
+    };
+
     if (goodIds.length === 0) {
       return { queued: 0, total: 0 };
     }
@@ -72,4 +85,38 @@ export async function syncAllStocks() {
   } finally {
     fullSyncPromise = null;
   }
+}
+
+export async function getFullSyncProgress() {
+  const queueMetrics = await getQueueMetrics();
+  const remaining = queueMetrics.uniqueInQueue + queueMetrics.processing;
+  const total = fullSyncState.total || remaining;
+  const completed = total > 0 ? Math.max(total - remaining, 0) : 0;
+
+  let status = 'idle';
+  if (fullSyncState.active || remaining > 0) {
+    status = 'running';
+  }
+
+  if (status === 'running' && fullSyncState.active && remaining === 0) {
+    status = 'completed';
+  }
+
+  if (status === 'completed') {
+    fullSyncState = {
+      ...fullSyncState,
+      active: false,
+      completedAt: fullSyncState.completedAt || new Date().toISOString(),
+    };
+  }
+
+  return {
+    status,
+    total,
+    completed,
+    remaining,
+    startedAt: fullSyncState.startedAt,
+    completedAt: fullSyncState.completedAt,
+    queue: queueMetrics,
+  };
 }
