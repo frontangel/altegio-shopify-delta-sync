@@ -6,7 +6,8 @@ ENV NODE_ENV=production
 
 # Enable Corepack for Yarn Berry and install dependencies with a reproducible lockfile
 RUN corepack enable
-COPY package.json yarn.lock .yarnrc.yml .yarn/ ./
+# Copy dependency manifests; wildcards avoid build failures if optional Yarn files are absent
+COPY package.json yarn.lock* .yarnrc.yml* .yarn/ ./
 RUN yarn install --immutable \
   && yarn cache clean
 
