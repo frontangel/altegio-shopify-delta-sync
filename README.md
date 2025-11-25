@@ -139,6 +139,7 @@ Endpoints:
 - GET /logs – HTML page with recent logs (basic auth protected)
 - GET /db – JSON dump of cache (basic auth protected)
 - GET /sku?sku=... – resolves Shopify inventoryItemId by SKU (basic auth protected)
+- POST /sync/all – enqueues all Altegio goods for full stock synchronization (basic auth protected; returns 409 if a sync is already running)
 - POST /webhook – main Altegio integration entry
 
 Example webhook payload (shape may vary by resource):
