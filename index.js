@@ -14,7 +14,7 @@ import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
 import { CONFIG } from './utils/config.js';
 import { recordDeadLetter } from './store/dead-letter.store.js';
-import { isFullSyncInProgress, syncAllStocks } from './services/full-sync.service.js';
+import { getFullSyncProgress, isFullSyncInProgress, syncAllStocks } from './services/full-sync.service.js';
 
 const PORT = CONFIG.server.port;
 const __filename = fileURLToPath(import.meta.url);
@@ -25,7 +25,7 @@ app.use(express.json());
 
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
-app.use(['/sku', '/db', '/logs', '/sync/all'], basicAuthMiddleware, waitUntilReady);
+app.use(['/sku', '/db', '/logs', '/sync/all', '/sync/progress'], basicAuthMiddleware, waitUntilReady);
 
 app.get('/healthz', (req, res) => {
   const { isReady } = useStore();
@@ -61,6 +61,16 @@ app.post('/sync/all', async (req, res) => {
   } catch (error) {
     console.error('❌ Full sync failed:', error.message);
     return res.status(500).json({ error: true, message: error.message || 'Full sync failed' });
+  }
+});
+
+app.get('/sync/progress', async (req, res) => {
+  try {
+    const progress = await getFullSyncProgress();
+    return res.json(progress);
+  } catch (error) {
+    console.error('❌ Failed to get sync progress:', error.message);
+    return res.status(500).json({ error: true, message: error.message || 'Unable to fetch sync progress' });
   }
 });
 

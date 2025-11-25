@@ -10,6 +10,7 @@ import { getRedisClient, markRedisFallback, redisQueueAvailable } from '../store
 const queueSet = new Set();
 const retryCounts = new Map();
 let isProcessing = false;
+let currentProcessingId = null;
 
 const redis = getRedisClient();
 const redisKeys = {
@@ -143,12 +144,14 @@ export async function processNextId() {
     const { goodId, usingRedis } = await pullNextId();
     if (!goodId) return;
 
-  const ctx = {
-    altegio_sku: '',
-    quantity: null,
-    storage_id: CONFIG.altegio.storageId,
-    company_id: CONFIG.altegio.companyId,
-  };
+    currentProcessingId = goodId;
+
+    const ctx = {
+      altegio_sku: '',
+      quantity: null,
+      storage_id: CONFIG.altegio.storageId,
+      company_id: CONFIG.altegio.companyId,
+    };
 
     try {
       await handleGoodId(goodId, ctx);
@@ -174,6 +177,7 @@ export async function processNextId() {
       scheduleRetry(goodId, delay, usingRedis);
     }
   } finally {
+    currentProcessingId = null;
     isProcessing = false;
   }
 }
@@ -229,4 +233,39 @@ export function __resetQueueForTests() {
 
 if (process.env.NODE_ENV !== 'test') {
   setInterval(processNextId, 2000);
+}
+
+export async function getQueueMetrics() {
+  if (redisQueueAvailable()) {
+    try {
+      const [uniqueInQueue, pending, processing] = await redis
+        .multi()
+        .scard(redisKeys.set)
+        .llen(redisKeys.pending)
+        .llen(redisKeys.processing)
+        .exec()
+        .then((results) => results.map(([, value]) => value || 0));
+
+      return {
+        usingRedis: true,
+        uniqueInQueue,
+        pending,
+        processing,
+        currentProcessingId,
+        retrying: retryCounts.size,
+      };
+    } catch (err) {
+      console.warn(`⚠️ Unable to read Redis queue metrics: ${err.message}`);
+      markRedisFallback(err.message);
+    }
+  }
+
+  return {
+    usingRedis: false,
+    uniqueInQueue: queueSet.size + (currentProcessingId ? 1 : 0),
+    pending: queueSet.size,
+    processing: currentProcessingId ? 1 : 0,
+    currentProcessingId,
+    retrying: retryCounts.size,
+  };
 }
