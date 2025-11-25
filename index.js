@@ -64,6 +64,7 @@ app.post('/sync/all', async (req, res) => {
   }
 });
 
+
 app.get('/sync/progress', async (req, res) => {
   try {
     const progress = await getFullSyncProgress();
