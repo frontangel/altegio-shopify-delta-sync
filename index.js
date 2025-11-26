@@ -89,20 +89,23 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
+  const resource = req.body.resource || ''
+  const resourceType = req.body.data?.type || ''
+
   if (ctx.error) {
-    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body)});
-    return res.status(400).json({error: true, message: ctx.log.reason});
+    const hookId = CacheManager.logWebhook({...ctx.log, resource, type: resourceType, json: JSON.stringify(req.body)});
+    return res.status(400).json({error: true, message: ctx.log.reason, hookId});
   }
 
   if (ctx.done) {
-    CacheManager.logWebhook({...ctx.log, type: 'hook', json: JSON.stringify(req.body)});
-    return res.status(200).json({status: ctx.log.status, message: ctx.log.reason});
+    const hookId = CacheManager.logWebhook({...ctx.log, resource, type: resourceType, json: JSON.stringify(req.body)});
+    return res.status(200).json({status: ctx.log.status, message: ctx.log.reason, hookId});
   }
 
-  CacheManager.logWebhook({status: 'success', type: 'hook', json: JSON.stringify(req.body)});
-  addIdsToQueue(ctx.state.product_ids);
+  const hookId = CacheManager.logWebhook({status: 'process', type: resourceType, resource, json: JSON.stringify(req.body)});
+  addIdsToQueue({ hookId, product_ids: ctx.state.product_ids });
 
-  return res.json(ctx.state);
+  return res.json({ ...ctx.state, hookId });
 });
 
 

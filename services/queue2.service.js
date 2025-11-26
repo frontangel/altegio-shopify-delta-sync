@@ -1,25 +1,27 @@
 import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js'
-import { useStore } from '../store/useStore.js';
 import { CacheManager } from '../store/cache.manager.js';
 
-const queueSet = new Set();
+const queue = [];
 let isProcessing = false;
 
-const { getAltegioArticleById } = useStore()
-
-export function addIdsToQueue(ids) {
-  const idArray = Array.isArray(ids) ? ids : [ids]
-  idArray.forEach(id => queueSet.add(id))
+export function addIdsToQueue(data) {
+  const { hookId, product_ids } = data;
+  const idArray = Array.isArray(product_ids) ? product_ids : [product_ids]
+  for (const id of idArray) {
+    queue.push({ hookId, id, retry: 0 });
+  }
 }
 
 export async function processNextId() {
-  if (isProcessing || queueSet.size === 0) return;
+  if (isProcessing) return;
+  if (queue.length === 0) return;
 
   isProcessing = true;
-  const iterator = queueSet.values();
-  const goodId = iterator.next().value;
-  queueSet.delete(goodId);
+
+  const task = queue.shift();
+  const hookId = task.hookId;
+  const goodId = task.id;
 
   const ctx = {
     altegio_sku: '',
@@ -27,24 +29,54 @@ export async function processNextId() {
   }
 
   try {
-    const altegioProduct = await AltegioService.fetchProduct(1275575, goodId)
-    ctx.altegio_sku = altegioProduct?.data?.article
-    ctx.quantity = altegioProduct.data.actual_amounts.find(a => a.storage_id === 2557508)?.amount;
-
-    const inventoryItemId = await CacheManager.inventoryItemIdByAltegioSku(ctx.altegio_sku)
-    if (!inventoryItemId) {
-      CacheManager.logWebhook({ status: 'skipped', reason: 'Inventory item id not found', type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+    // --- 1) Запит у Altegio ---
+    const productRes = await AltegioService.fetchProduct(1275575, goodId);
+    const data = productRes?.data;
+    if (!data) {
+      CacheManager.updateLogById({ _id: hookId, status: 'error', reason: 'Invalid Altegio product response', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
       isProcessing = false;
       return
     }
+
+    ctx.altegio_sku = data.article
+
+    const amounts = data.actual_amounts || [];
+    ctx.quantity = amounts.find(a => a.storage_id === 2557508)?.amount ?? 0;
+
+
+    // --- 2) inventory item id ---
+    const inventoryItemId = await CacheManager.inventoryItemIdByAltegioSku(ctx.altegio_sku)
+    if (!inventoryItemId) {
+      CacheManager.updateLogById({ _id: hookId, status: 'skipped', reason: 'Inventory item id not found', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+      isProcessing = false;
+      return
+    }
+
+
+    // --- 3) Shopify update ---
     await ShopifyService.setAbsoluteQuantity(inventoryItemId, ctx.quantity)
-    CacheManager.logWebhook({ status: 'success', type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+    CacheManager.updateLogById({ _id: hookId, status: 'success', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+
   } catch (err) {
-    CacheManager.logWebhook({ status: 'error', reason: err.message, type: 'correction', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+    CacheManager.updateLogById({ _id: hookId, status: 'error', reason: err.message, altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
     console.error('❌ Task failed:', err.message);
+
+    if (task.retry < 1) {
+      task.retry++;
+      queue.push(task);
+    }
   } finally {
     isProcessing = false;
   }
 }
 
-setInterval(processNextId, 2000);
+async function loop() {
+  try {
+    await processNextId();
+  } finally {
+    setTimeout(loop, 250);
+  }
+}
+
+loop().then(() => console.log('Queue processing started.'));
+
