@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { json } from 'express';
 import { useStore } from './store/useStore.js';
 import { RedisManager } from './store/redis.manger.js';
 import { waitUntilReady } from './middleware/waitReady.middleware.js';
@@ -30,12 +30,22 @@ app.get('/healthz', async (req, res) => {
   res.json({ ok: true, ready: isReady(), skuCacheSize });
 });
 
+app.get('/double', async (req, res) => {
+  const doubles = await RedisManager.getDoubles()
+  const json = Object.entries(doubles).reduce((acc, [key, value]) => {
+    acc[key] = JSON.parse(value);
+    return acc
+  }, {})
+  res.json(json);
+})
+
 app.get('/logs', async (req, res) => {
   const {formatedLog} = useUtils();
   const limit = Math.min(Number(req.query.limit) || 100, 100);
-  const logs = (await RedisManager.getWebhookLogs(limit)).map(formatedLog);
+  const logs = (await RedisManager.getWebhookLogs(limit)).sort((a, b) => a.timestamp > b.timestamp ? -1 : 1).map(formatedLog);
 
   const isJson = req.query.json === 'true';
+
   if (isJson) {
     return res.json(logs);
   }
@@ -57,9 +67,7 @@ app.get('/debug/redis/flush', async (req, res) => {
     if (process.env.NODE_ENV !== 'development') {
       return res.status(403).json({ error: 'Forbidden outside DEV mode' });
     }
-
     await redis.flushall();
-
     res.json({ status: 'ok', message: 'Redis cleared' });
   } catch (err) {
     res.status(500).json({ error: err.message });
