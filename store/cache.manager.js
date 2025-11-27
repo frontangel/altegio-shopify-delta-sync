@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 import { useStore } from './useStore.js';
 
 const { getShopifyInventoryIdsBySku } = useStore()
@@ -28,16 +30,19 @@ export const CacheManager = {
     return true
   },
   logWebhook(entry) {
-    this.webhookLogs.push({ _id: Date.now() + Math.random(), timestamp: Date.now(), ...entry });
+    const hookId = crypto.randomUUID();
+
+    this.webhookLogs.push({ _id: hookId, timestamp: Date.now(), ...entry });
     if (this.webhookLogs.length > MAX_LOGS) {
       this.webhookLogs.splice(0, this.webhookLogs.length - MAX_LOGS);
     }
+    return hookId
   },
   getWebhookLogs() {
     return this.webhookLogs;
   },
   shopifySkuInventory: () => Object.fromEntries(skuMapper),
-  altegioArticleShopifySky: () => Object.fromEntries(articleMapper),
+  altegioArticleShopifySky: () => Object.fromEntries(articleMapper), // done
   inventoryItemIdByAltegioSku: async (altegioSku) => {
     if (skuMapper.has(altegioSku)) return CacheManager.skuMapper.get(altegioSku)
 

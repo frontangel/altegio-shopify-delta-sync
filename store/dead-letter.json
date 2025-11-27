@@ -1,0 +1,42 @@
+[
+  {
+    "status": "error",
+    "reason": "storage.id is required",
+    "resource": "client",
+    "retryable": false,
+    "payload": {
+      "company_id": 1275575,
+      "resource": "client",
+      "resource_id": 167155699,
+      "status": "update",
+      "data": {
+        "id": 167155699,
+        "name": "Mariam (Lord Byron - toy doodle and Lord Tzu - shihtzu)",
+        "surname": "",
+        "patronymic": "",
+        "display_name": "Mariam (Lord Byron - toy doodle and Lord Tzu - shihtzu)",
+        "phone": "+971585564733",
+        "email": "",
+        "card": "",
+        "birth_date": "",
+        "comment": "",
+        "discount": 0,
+        "visits": 5,
+        "sex_id": 0,
+        "sex": "unknown",
+        "sms_check": 0,
+        "sms_bot": 0,
+        "sms_not": 0,
+        "spent": 4066,
+        "paid": 4066,
+        "balance": 0,
+        "importance_id": 0,
+        "importance": "No priority level",
+        "categories": [],
+        "last_change_date": "2025-11-26T09:37:44+0400",
+        "custom_fields": {}
+      }
+    },
+    "timestamp": 1764171184892
+  }
+]
