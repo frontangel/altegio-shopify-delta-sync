@@ -108,6 +108,7 @@ export const RedisManager = {
   },
 
   async getSkuMapping(sku) {
+    console.log('getSkuMapping', sku);
     return redis.hget(SKU_MAPPER_KEY, sku);
   },
 
