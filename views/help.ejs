@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>HELP</title>
+    <style>
+        h1 {
+            text-align: center;
+        }
+        ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            width: fit-content;
+            border: 1px solid #ccc;
+            margin: 0 auto;
+        }
+        li {
+            padding: 0.5rem 1rem;
+        }
+        li + li {
+            border-top: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+<h1>Інструкція</h1>
+<ul>
+    <li><h3 style="margin: 0">Посилання</h3></li>
+    <li><a href="/double" target="_blank">double</a> - дублі</li>
+    <li><a href="/queue" target="_blank">queue</a> - черга</li>
+    <li><a href="/logs" target="_blank">logs</a> - логі, <a href="/logs?json=true" target="_blank">json</a> - покаже формат json</li>
+    <li><a href="/db" target="_blank">db</a> - закешована база</li>
+    <li><a href="/healthz" target="_blank">healthz</a> - показує статус кешування і кількість</li>
+    <li><a href="/inventory?id=gid://shopify/InventoryItem/52489397076285" target="_blank">inventory</a> - inventory показує данні по інвенторі (напр id=gid://shopify/InventoryItem/52489397076285)</li>
+    <li><a href="/sku?id=100100" target="_blank">sku</a> - показує inventoryId по SKU (напр: id=100100)</li>
+    <li><h3 style="margin: 0">Інформація</h3></li>
+    <li><i>Логи живуть 3 дні</i></li>
+    <li><i>Черга очищується автоматично</i></li>
+</ul>
+</body>
+</html>

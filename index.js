@@ -22,7 +22,11 @@ app.use(express.json());
 
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
-app.use(['/sku', '/db', '/logs', '/debug/redis/flush', '/queue'], basicAuthMiddleware, waitUntilReady);
+app.use(['/', '/sku', '/db', '/logs', '/debug/redis/flush', '/queue', '/double'], basicAuthMiddleware, waitUntilReady);
+
+app.get('/', async (req, res) => {
+  res.render('help')
+})
 
 app.get('/healthz', async (req, res) => {
   const { isReady } = useStore();
@@ -155,7 +159,8 @@ app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
 
   if (process.env.WARMUP_ON_START === 'true') {
-    setTimeout(() => {
+    setTimeout(async () => {
+      await RedisManager.clearDoubles()
       useStore().getShopifyInventoryIdsBySku()
         .then(() => console.log('Cashing done.'))
         .catch(e => console.warn('Warmup failed:', e?.message || e));

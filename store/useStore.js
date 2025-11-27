@@ -7,9 +7,11 @@ let shopifySkuInventoryPromise = null;
 let altegioArticlePromiseMap = new Map();
 let initialized = false;
 
-const skus = {}
+
 
 export function useStore() {
+  const skus = {}
+
   const setAltegioArticleById = async (companyId, goodId) => {
     const candidate = await RedisManager.getArticle(goodId)
     if (candidate) return Promise.resolve(candidate);
@@ -62,22 +64,10 @@ export function useStore() {
               } else {
                 skus[cleanSku] = [inventoryItemId];
               }
-
               await RedisManager.setSkuMapping(cleanSku, inventoryItemId)
             }
           }
         }
-        const result = Object.entries(skus).reduce((acc, [key, value]) => {
-          if (value.length > 1) {
-            acc[key] = value;
-          }
-          return acc;
-        }, {})
-
-        for (const key in result) {
-          await RedisManager.setDoubles(key, JSON.stringify(result[key]))
-        }
-
         initialized = true;
       }
       catch (e) {
@@ -85,7 +75,7 @@ export function useStore() {
       }
       finally {
         shopifySkuInventoryPromise = null;
-
+        await RedisManager.setMultipleDoubles(skus)
         const [skuMapperSize, notFoundCacheSize, notFound] = await Promise.all([RedisManager.getAllSkuMappingsSize(), RedisManager.getAllNotFoundRecords()]);
         console.log(
           `[Cache] skuMapper size=${skuMapperSize} notFoundCache size=${notFoundCacheSize}`
