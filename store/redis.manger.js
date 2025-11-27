@@ -77,8 +77,25 @@ export const RedisManager = {
     return Object.keys(records).length;
   },
 
+  async setMultipleDoubles(skus) {
+    const doubles = Object.entries(skus).reduce((acc, [key, value]) => {
+      if (value.length > 1) {
+        acc[key] = value;
+      }
+      return acc;
+    }, {})
+
+    for (const key in doubles) {
+      await RedisManager.setDoubles(key, JSON.stringify(doubles[key]))
+    }
+  },
+
   async setDoubles(sku, inventoryItemId) {
     await redis.hset(SKU_DOUBLE_KEY, sku, inventoryItemId);
+  },
+
+  async clearDoubles() {
+    await redis.del(SKU_DOUBLE_KEY);
   },
 
   async getDoubles() {
