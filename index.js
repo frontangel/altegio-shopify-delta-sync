@@ -67,6 +67,7 @@ app.get('/sync/:id', async (req, res) => {
     return res.json({inventoryItem})
   }
 
+  await new Promise(r => setTimeout(r, 1000));
   const inventoryItem = await ShopifyService.getInventoryItemById(inventoryItemId)
   await ShopifyService.setAbsoluteQuantity(inventoryItemId, quantity)
   res.json({status: 'ok', message: 'Sync started', inventoryItem });

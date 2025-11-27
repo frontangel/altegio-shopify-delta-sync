@@ -10,7 +10,6 @@ export async function addIdsToQueue(hookId, ids) {
   }
 }
 
-
 async function workerLoop() {
   while (true) {
     const task = await RedisManager.nextQueue();
