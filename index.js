@@ -62,7 +62,7 @@ app.get('/sync/:id', async (req, res) => {
   const quantity = Number(req.query.q)
 
   const inventoryItemId = await RedisManager.getSkuMapping(sku);
-  if (isNaN(quantity)) {
+  if (!req.query.q?.trim() || isNaN(quantity)) {
     const inventoryItem = await ShopifyService.getInventoryItemById(inventoryItemId)
     return res.json({inventoryItem})
   }
