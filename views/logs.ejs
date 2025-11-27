@@ -115,7 +115,7 @@
     <tbody>
     <% logs.forEach((log, index) => { const jsonId = `json-${index}`; %>
         <tr>
-            <td class="w-260"><%= log._id %></td>
+            <td class="w-260"><%= log.id %></td>
             <td class="w-140 text-center"><%= log.date %></td>
             <td class="w-100 text-center"><%= log.type %></td>
             <td class="w-240"><%= log.resource %></td>

@@ -1,8 +1,8 @@
-import { CacheManager } from '../store/cache.manager.js';
+import { RedisManager } from '../store/redis.manger.js';
 
 export async function getInventoryItemIdStep (ctx) {
   try {
-    const inventoryItemId = await CacheManager.inventoryItemIdByAltegioSku(ctx.state.altegio_sku)
+    const inventoryItemId = await RedisManager.getSkuMapping(ctx.state.altegio_sku)
     if (!inventoryItemId) {
       ctx.log.status = 'skipped'
       ctx.log.reason = 'Inventory item Id not found'

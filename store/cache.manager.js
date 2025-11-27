@@ -42,7 +42,7 @@ export const CacheManager = {
     return this.webhookLogs;
   },
   shopifySkuInventory: () => Object.fromEntries(skuMapper),
-  altegioArticleShopifySky: () => Object.fromEntries(articleMapper),
+  altegioArticleShopifySky: () => Object.fromEntries(articleMapper), // done
   inventoryItemIdByAltegioSku: async (altegioSku) => {
     if (skuMapper.has(altegioSku)) return CacheManager.skuMapper.get(altegioSku)
 

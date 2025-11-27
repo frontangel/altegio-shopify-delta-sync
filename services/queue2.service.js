@@ -1,25 +1,40 @@
 import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js'
-import { CacheManager } from '../store/cache.manager.js';
+import { RedisManager } from '../store/redis.manger.js';
 
-const queue = [];
-let isProcessing = false;
+export async function addIdsToQueue(hookId, ids) {
+  const idArray = Array.isArray(ids) ? ids : [ids]
 
-export function addIdsToQueue(data) {
-  const { hookId, product_ids } = data;
-  const idArray = Array.isArray(product_ids) ? product_ids : [product_ids]
   for (const id of idArray) {
-    queue.push({ hookId, id, retry: 0 });
+    await RedisManager.setQueue(hookId, id)
   }
 }
 
-export async function processNextId() {
-  if (isProcessing) return;
-  if (queue.length === 0) return;
 
-  isProcessing = true;
+async function workerLoop() {
+  while (true) {
+    const task = await RedisManager.nextQueue();
+    if (!task) {
+      await new Promise(r => setTimeout(r, 3000)); // пауза коли черга пуста
+      continue;
+    }
 
-  const task = queue.shift();
+    try {
+      await processNextId(task);
+    } catch (err) {
+      if (task.retry >= 1) {
+        console.log("❌ Task failed twice, dropping:", task.hookId);
+        continue; // видаляємо повністю
+      }
+
+      console.log("⚠️ Task failed, retrying:", task.hookId);
+      await RedisManager.retryQueue(task);
+    }
+  }
+}
+
+
+export async function processNextId(task) {
   const hookId = task.hookId;
   const goodId = task.id;
 
@@ -33,8 +48,7 @@ export async function processNextId() {
     const productRes = await AltegioService.fetchProduct(1275575, goodId);
     const data = productRes?.data;
     if (!data) {
-      CacheManager.updateLogById({ _id: hookId, status: 'error', reason: 'Invalid Altegio product response', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
-      isProcessing = false;
+      await RedisManager.updateLogWebhook(hookId, { status: 'error', reason: 'Invalid Altegio product response', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity })
       return
     }
 
@@ -45,38 +59,21 @@ export async function processNextId() {
 
 
     // --- 2) inventory item id ---
-    const inventoryItemId = await CacheManager.inventoryItemIdByAltegioSku(ctx.altegio_sku)
+    const inventoryItemId = await RedisManager.getSkuMapping(ctx.altegio_sku)
     if (!inventoryItemId) {
-      CacheManager.updateLogById({ _id: hookId, status: 'skipped', reason: 'Inventory item id not found', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
-      isProcessing = false;
+      await RedisManager.updateLogWebhook(hookId ,{ status: 'skipped', reason: 'Inventory item id not found', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
       return
     }
 
-
     // --- 3) Shopify update ---
     await ShopifyService.setAbsoluteQuantity(inventoryItemId, ctx.quantity)
-    CacheManager.updateLogById({ _id: hookId, status: 'success', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+    await RedisManager.updateLogWebhook(hookId, { status: 'success', altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
 
   } catch (err) {
-    CacheManager.updateLogById({ _id: hookId, status: 'error', reason: err.message, altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
-    console.error('❌ Task failed:', err.message);
-
-    if (task.retry < 1) {
-      task.retry++;
-      queue.push(task);
-    }
-  } finally {
-    isProcessing = false;
+    await RedisManager.updateLogWebhook(hookId, { status: 'error', reason: err.message, altegio_sku: ctx.altegio_sku, quantity: ctx.quantity });
+    throw err;
   }
 }
 
-async function loop() {
-  try {
-    await processNextId();
-  } finally {
-    setTimeout(loop, 250);
-  }
-}
-
-loop().then(() => console.log('Queue processing started.'));
+workerLoop().then(() => console.log('Queue processing started.'));
 

@@ -1,28 +1,32 @@
-import { CacheManager } from './cache.manager.js';
+
 import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js';
+import { RedisManager } from './redis.manger.js';
 
 let shopifySkuInventoryPromise = null;
 let altegioArticlePromiseMap = new Map();
 let initialized = false;
 
+const skus = {}
+
 export function useStore() {
-  const setAltegioArticleById = (companyId, goodId) => {
-    if (CacheManager.articleMapper.has(goodId)) return Promise.resolve();
+  const setAltegioArticleById = async (companyId, goodId) => {
+    const candidate = await RedisManager.getArticle(goodId)
+    if (candidate) return Promise.resolve(candidate);
+
     if (altegioArticlePromiseMap.has(goodId)) return altegioArticlePromiseMap.get(goodId);
 
-    const promise = AltegioService.fetchProduct(companyId, goodId).then(({data}) => {
-      CacheManager.articleMapper.set(goodId, data.article);
-    });
+    const promise = AltegioService.fetchProduct(companyId, goodId).then(({data}) => RedisManager.setArticle(goodId, data.article));
     altegioArticlePromiseMap.set(goodId, promise);
     return promise;
   };
 
   const getAltegioArticleById = async (companyId, goodId) => {
-    if (!CacheManager.articleMapper.has(goodId)) {
+    const candidate = await RedisManager.getArticle(goodId)
+    if (!candidate) {
       await setAltegioArticleById(companyId, goodId);
     }
-    return CacheManager.articleMapper.get(goodId);
+    return candidate;
   };
 
   const getShopifyInventoryIdsBySku = async () => {
@@ -53,22 +57,37 @@ export function useStore() {
             const cleanSku = typeof sku === 'string' ? sku.trim() : null;
 
             if (cleanSku && inventoryItemId) {
-              CacheManager.skuMapper.set(cleanSku, inventoryItemId);
-              CacheManager.notFoundCache.delete(cleanSku);
+              if (cleanSku in skus) {
+                skus[cleanSku].push(inventoryItemId);
+              } else {
+                skus[cleanSku] = [inventoryItemId];
+              }
+
+              await RedisManager.setSkuMapping(cleanSku, inventoryItemId)
             }
           }
         }
+        const result = Object.entries(skus).reduce((acc, [key, value]) => {
+          if (value.length > 1) {
+            acc[key] = value;
+          }
+          return acc;
+        }, {})
+        console.log(result);
         initialized = true;
-      } finally {
-        // важливо: не лишати «завислу» promise при помилці
+      }
+      catch (e) {
+        console.error(e)
+      }
+      finally {
         shopifySkuInventoryPromise = null;
 
+        const [skuMapperSize, notFoundCacheSize, notFound] = await Promise.all([RedisManager.getAllSkuMappingsSize(), RedisManager.getAllNotFoundRecords()]);
         console.log(
-          `[Cache] skuMapper size=${CacheManager.skuMapper.size} notFoundCache size=${CacheManager.notFoundCache.size}`
+          `[Cache] skuMapper size=${skuMapperSize} notFoundCache size=${notFoundCacheSize}`
         );
       }
     })();
-
 
     return shopifySkuInventoryPromise;
   };

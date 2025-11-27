@@ -1,6 +1,5 @@
 import { GraphQLClient } from 'graphql-request';
 import { useUtils } from '../utils/index.js';
-import { CacheManager } from '../store/cache.manager.js';
 
 const {sleep} = useUtils();
 
@@ -42,8 +41,7 @@ export async function getProducts(cursor = null, first = 150) {
       }
     }
   `;
-  const res = await requestWithThrottle(query, variables);
-  return res; // { products: { pageInfo, edges } }
+  return requestWithThrottle(query, variables);
 }
 
 export async function fetchAllProducts() {
@@ -122,13 +120,43 @@ export async function getInventoryItemById(inventoryItemId) {
   `;
 
   try {
-    const data = await requestWithThrottle(query, {id: inventoryItemId});
-    return data.inventoryItem;
-  } catch (error) {
-    console.error('Failed to fetch inventory item:', error.response?.errors || error.message);
-    throw error;
+    const resp = await requestWithThrottle(query, { id: inventoryItemId });
+
+    // Для дебагу — один раз глянути що реально приходить
+    // console.dir(resp, { depth: null });
+
+    // Пробуємо кілька варіантів структури
+    const item =
+      resp?.data?.inventoryItem ??
+      resp?.inventoryItem ??
+      resp?.data?.data?.inventoryItem ??
+      null;
+
+    if (!item) {
+      console.error('❌ inventoryItem not found in response for id:', inventoryItemId);
+      console.dir(resp, { depth: null });
+      throw new Error(`Inventory item not found for ID: ${inventoryItemId}`);
+    }
+
+    const levels =
+      item.inventoryLevels?.edges?.map(e => e?.node).filter(Boolean) ?? [];
+
+    return {
+      id: item.id,
+      inventoryLevels: levels
+    };
+
+  } catch (err) {
+    const gqlErrors =
+      err?.response?.data?.errors ??
+      err?.response?.errors ??
+      err.message;
+
+    console.error('❌ Failed to fetch inventory item:', gqlErrors);
+    throw err;
   }
 }
+
 
 export async function setAbsoluteQuantity(inventoryItemId, quantity) {
   const mutation = `
@@ -175,58 +203,58 @@ export async function setAbsoluteQuantity(inventoryItemId, quantity) {
   }
 }
 
-export async function mutateInventoryQuantity(ctx) {
-  const {inventory_item_id: inventoryItemId, amount: delta} = ctx.state;
-
-  const query = `
-    mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
-      inventoryAdjustQuantities(input: $input) {
-        inventoryAdjustmentGroup {
-          changes {
-            name
-            delta
-          }
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-  `;
-  const variables = {
-    input: {
-      reason: 'correction',
-      name: 'available',
-      changes: [
-        {
-          inventoryItemId,
-          locationId,
-          delta,
-        },
-      ],
-    },
-  };
-
-  try {
-    const response = await requestWithThrottle(query, variables);
-    ;
-
-    if (response.inventoryAdjustQuantities.userErrors?.length) {
-      ctx.log.status = 'error';
-      ctx.log.reason = response.inventoryAdjustQuantities.userErrors;
-    } else {
-      ctx.log.status = 'success';
-      ctx.log.reason = `Inventory adjusted: ${delta}`;
-    }
-    CacheManager.updateLogById(ctx.log);
-  } catch (error) {
-    ctx.log.status = 'error';
-    ctx.log.reason = error.response?.errors || error.message;
-    CacheManager.updateLogById(ctx.log);
-    throw error;
-  }
-}
+// export async function mutateInventoryQuantity(ctx) {
+//   const {inventory_item_id: inventoryItemId, amount: delta} = ctx.state;
+//
+//   const query = `
+//     mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
+//       inventoryAdjustQuantities(input: $input) {
+//         inventoryAdjustmentGroup {
+//           changes {
+//             name
+//             delta
+//           }
+//         }
+//         userErrors {
+//           field
+//           message
+//         }
+//       }
+//     }
+//   `;
+//   const variables = {
+//     input: {
+//       reason: 'correction',
+//       name: 'available',
+//       changes: [
+//         {
+//           inventoryItemId,
+//           locationId,
+//           delta,
+//         },
+//       ],
+//     },
+//   };
+//
+//   try {
+//     const response = await requestWithThrottle(query, variables);
+//
+//     if (response.inventoryAdjustQuantities.userErrors?.length) {
+//       ctx.log.status = 'error';
+//       ctx.log.reason = response.inventoryAdjustQuantities.userErrors;
+//     } else {
+//       ctx.log.status = 'success';
+//       ctx.log.reason = `Inventory adjusted: ${delta}`;
+//     }
+//     // CacheManager.updateLogById(ctx.log);
+//     // await RedisManager.updateLogWebhook()
+//   } catch (error) {
+//     ctx.log.status = 'error';
+//     ctx.log.reason = error.response?.errors || error.message;
+//     // CacheManager.updateLogById(ctx.log);
+//     throw error;
+//   }
+// }
 
 let _lastThrottle = { attempts: 0, waitedMs: 0 };
 export function getLastThrottle() { return _lastThrottle; }

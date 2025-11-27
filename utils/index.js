@@ -12,9 +12,10 @@ export function useUtils() {
     }
   }
   const formatedLog = (log) => {
-    const date = new Date(log.timestamp).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', hour12: false });
+    const date = new Date(parseInt(log.timestamp)).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', hour12: false });
     return {
       ...log,
+      id: log.id.split(':').pop(),
       date
     }
   }

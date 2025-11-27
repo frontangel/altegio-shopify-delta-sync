@@ -2,120 +2,126 @@ import crypto from "crypto";
 import { redis } from "../services/redis.js";
 
 const STREAM_KEY = "webhook_logs";
+const QUEUE_KEY = "queue";
+const LOGS_KEY = "webhook_logs";
 const SKU_MAPPER_KEY = "sku_mapper";
 const ARTICLE_MAPPER_KEY = "article_mapper";
-const SKU_HASH = 'sku_mapper';
-const ARTICLE_HASH = 'article_mapper';
 const NOTFOUND_PREFIX = 'notfound:';
 const NOT_FOUND_TTL = 10 * 60; // 10 хв у секундах
 
-export const CacheManager = {
-  // ---------- ЛОГИ ЧЕРЕЗ REDIS STREAMS ----------
-  async logWebhook(entry) {
-    const id = crypto.randomUUID();
-
-    await redis.xadd(
-      STREAM_KEY,
-      "MAXLEN",
-      "~",
-      5000,         // авто-ротація
-      "*",
-      "id", id,
-      "timestamp", Date.now(),
-      "status", entry.status || "",
-      "reason", entry.reason || "",
-      "type", entry.type || "",
-      "altegio_sku", entry.altegio_sku || "",
-      "quantity", entry.quantity ?? ""
-    );
-
-    return id;
+export const RedisManager = {
+  // -> WEBHOOK LOGS
+  async setWebhookLogs(data) {
+    const uuid = crypto.randomUUID();
+    const timestamp = Date.now()
+    const payload = {
+      timestamp,
+      exp: timestamp + 3 * 24 * 60 * 60 * 1000,
+      ...data
+    };
+    await redis.set(`${LOGS_KEY}:${uuid}`, JSON.stringify(payload))
+    await redis.expire(`${LOGS_KEY}:${uuid}`, 3 * 24 * 60 * 60);
+    return uuid;
   },
 
-  async getArticle(goodId) {
-    return redis.hget(ARTICLE_HASH, goodId);
+  async getWebhookLogs(limit = 100) {
+    return this.getAllByPatters(LOGS_KEY)
   },
 
-  async hasArticle(goodId) {
-    return redis.hexists(ARTICLE_HASH, goodId);
-  },
-
-  async setArticle(goodId, article) {
-    return redis.hset(ARTICLE_HASH, goodId, article);
+  async updateLogWebhook(id, patch) {
+    const raw = await redis.get(`${LOGS_KEY}:${id}`)
+    const log = JSON.parse(raw)
+    const reason = patch.reason ? [log.reason || '', patch.reason || ''].join('; ') : log.reason
+    await redis.set(`${LOGS_KEY}:${id}`, JSON.stringify({...log, ...patch, reason}))
   },
 
 
-  async getWebhookLogs(limit = 5000) {
-    const raw = await redis.xrevrange(STREAM_KEY, "+", "-", "COUNT", limit);
-    return raw.map(([id, arr]) => {
-      const obj = {};
-      for (let i = 0; i < arr.length; i += 2) {
-        obj[arr[i]] = arr[i + 1];
-      }
-      obj._id = id;
-      return obj;
-    });
+  // -> QUEUE
+  async setQueue(hookId, id) {
+    const payload = JSON.stringify({ hookId, id, retry: 0 });
+    await redis.rpush("queue:correction", payload);
   },
 
-  // ---------- SKU MAP ----------
-  async setSkuMapping(altegioSku, inventoryId) {
-    await redis.hset(SKU_MAPPER_KEY, altegioSku, inventoryId);
+  async nextQueue() {
+    const raw = await redis.lpop("queue:correction");
+    return raw ? JSON.parse(raw) : null;
   },
 
-  async getSkuMapping(altegioSku) {
-    return redis.hget(SKU_MAPPER_KEY, altegioSku);
+  async retryQueue(task) {
+    task.retry += 1;
+    await redis.rpush("queue:correction", JSON.stringify(task));
   },
 
-  async allSkuMappings() {
-    return redis.hgetall(SKU_HASH);
+  async getQueue() {
+    const items = await redis.lrange("queue:correction", 0, -1);
+    return items.map(i => JSON.parse(i));
   },
 
-  async getAllSkuMappings() {
-    return redis.hgetall(SKU_MAPPER_KEY);
-  },
 
-  // ---------- ARTICLE MAP ----------
-  async setArticleMapping(article, sku) {
-    await redis.hset(ARTICLE_MAPPER_KEY, article, sku);
-  },
-
-  async getArticleMapping(article) {
-    return redis.hget(ARTICLE_MAPPER_KEY, article);
-  },
-
-  async getAllArticleMappings() {
+  async altegioArticleShopifySky() {
     return redis.hgetall(ARTICLE_MAPPER_KEY);
   },
 
-  // ---------- NOT FOUND CACHE з TTL ----------
-  async isNotFoundCached(sku) {
-    return Boolean(await redis.exists(`notfound:${sku}`));
+  async shopifySkuInventory() {
+    return redis.hgetall(SKU_MAPPER_KEY);
   },
 
-  async setNotFound(sku) {
-    // зберігаємо будь-яке значення
-    await redis.set(`notfound:${sku}`, 1, "EX", NOT_FOUND_TTL);
+
+  async allSkuMappings() {
+    return redis.hgetall(SKU_MAPPER_KEY);
   },
 
-  // ---------- INVENTORY ITEM LOOKUP ----------
-  async inventoryItemIdByAltegioSku(altegioSku, fetchShopifyFn) {
-    // 1. Є у мапер?
-    const cached = await this.getSkuMapping(altegioSku);
-    if (cached) return cached;
+  async getAllSkuMappingsSize() {
+    const records = await this.allSkuMappings();
+    return Object.keys(records).length;
+  },
 
-    // 2. Якщо раніше не знаходили, чекаємо TTL
-    if (await this.isNotFoundCached(altegioSku)) {
-      return null;
-    }
+  async setSkuMapping(sku, inventoryItemId) {
+    await redis.del(NOTFOUND_PREFIX + sku);
+    return redis.hset(SKU_MAPPER_KEY, sku, inventoryItemId);
+  },
 
-    // 3. Оновлюємо від Shopify
-    await fetchShopifyFn();
+  async getSkuMapping(sku) {
+    return redis.hget(SKU_MAPPER_KEY, sku);
+  },
 
-    const updated = await this.getSkuMapping(altegioSku);
-    if (updated) return updated;
+  async getArticle(goodId) {
+    return redis.hget(ARTICLE_MAPPER_KEY, goodId);
+  },
 
-    // 4. Кешуємо промах
-    await this.setNotFound(altegioSku);
-    return null;
-  }
+  async setArticle(goodId, article) {
+    await redis.hset(ARTICLE_MAPPER_KEY, goodId, article);
+  },
+
+  async cacheNotFound(sku) {
+    return redis.set(NOTFOUND_PREFIX + sku, 1, 'EX', NOT_FOUND_TTL);
+  },
+
+  async getAllByPatters(patternPrefix = NOTFOUND_PREFIX) {
+    const pattern = `${patternPrefix}:*`;
+    let cursor = "0";
+    let keys = [];
+
+    do {
+      const [newCursor, batch] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 200);
+      keys.push(...batch);
+      cursor = newCursor;
+    } while (cursor !== "0");
+
+    if (keys.length === 0) return [];
+
+    const values = await redis.mget(keys);
+
+    return keys.map((key, i) => ({
+      id: key.replace("WEBHOOK_LOG:", ""),
+      ...JSON.parse(values[i] || "{}")
+    }));
+  },
+
+  async getAllNotFoundRecords() {
+    const records = await this.getAllByPatters(NOTFOUND_PREFIX);
+    return records.length
+  },
+
+
 };

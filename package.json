@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "start:dev": "nodemon index.js"
+    "start:dev": "nodemon index.js",
+    "redis:clear": "redis-cli FLUSHALL"
   },
   "private": true,
   "dependencies": {
