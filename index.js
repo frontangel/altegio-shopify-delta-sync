@@ -12,6 +12,7 @@ import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
 import { redis } from './services/redis.js';
 import * as ShopifyService from './services/shopify.service.js';
+import * as AltegioService from './services/altegio.service.js';
 
 const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
@@ -56,6 +57,21 @@ app.get('/logs', async (req, res) => {
   res.render('logs', {logs});
 });
 
+app.get('/sync/:id', async (req, res) => {
+  const sku = req.params.id;
+  const quantity = Number(req.query.q)
+
+  const inventoryItemId = await RedisManager.getSkuMapping(sku);
+  if (!quantity) {
+    const inventoryItem = await ShopifyService.getInventoryItemById(inventoryItemId)
+    return res.json({inventoryItem})
+  }
+
+  const inventoryItem = await ShopifyService.getInventoryItemById(inventoryItemId)
+  await ShopifyService.setAbsoluteQuantity(inventoryItemId, quantity)
+  res.json({status: 'ok', message: 'Sync started', inventoryItem });
+})
+
 app.get('/inventory', async (req, res) => {
   const result = await ShopifyService.getInventoryItemById(req.query.id);
   return res.json(result);
@@ -87,7 +103,7 @@ app.get('/db', async (req, res) => {
 });
 
 app.get('/sku', async (req, res) => {
-  const shopifyInventoryId = await RedisManager.getSkuMapping(req.query.sku);
+  const shopifyInventoryId = await RedisManager.getSkuMapping(req.query.id);
   return res.json({shopifyInventoryId});
 });
 
