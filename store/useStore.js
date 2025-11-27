@@ -73,7 +73,11 @@ export function useStore() {
           }
           return acc;
         }, {})
-        console.log(result);
+
+        for (const key in result) {
+          await RedisManager.setDoubles(key, JSON.stringify(result[key]))
+        }
+
         initialized = true;
       }
       catch (e) {

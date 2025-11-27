@@ -3,6 +3,7 @@ import { redis } from "../services/redis.js";
 
 const STREAM_KEY = "webhook_logs";
 const QUEUE_KEY = "queue";
+const SKU_DOUBLE_KEY = "double_mapper";
 const LOGS_KEY = "webhook_logs";
 const SKU_MAPPER_KEY = "sku_mapper";
 const ARTICLE_MAPPER_KEY = "article_mapper";
@@ -74,6 +75,14 @@ export const RedisManager = {
   async getAllSkuMappingsSize() {
     const records = await this.allSkuMappings();
     return Object.keys(records).length;
+  },
+
+  async setDoubles(sku, inventoryItemId) {
+    await redis.hset(SKU_DOUBLE_KEY, sku, inventoryItemId);
+  },
+
+  async getDoubles() {
+    return redis.hgetall(SKU_DOUBLE_KEY);
   },
 
   async setSkuMapping(sku, inventoryItemId) {
