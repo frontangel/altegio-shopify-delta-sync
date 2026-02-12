@@ -10,7 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getProductIdsStep } from './steps/get-product-ids.step.js';
 import { addIdsToQueue } from './services/queue2.service.js';
-import { redis } from './services/redis.js';
+import redis from './services/redis.js';
 import * as ShopifyService from './services/shopify.service.js';
 import * as AltegioService from './services/altegio.service.js';
 
