@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { redis } from "../services/redis.js";
+import redis from "../services/redis.js";
 
 const STREAM_KEY = "webhook_logs";
 const QUEUE_KEY = "queue";
