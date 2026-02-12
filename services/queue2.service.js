@@ -1,6 +1,7 @@
 import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js'
 import { RedisManager } from '../store/redis.manger.js';
+import {isRedisReady} from "./redis.js";
 
 export async function addIdsToQueue(hookId, ids) {
   const idArray = Array.isArray(ids) ? ids : [ids]
@@ -10,8 +11,16 @@ export async function addIdsToQueue(hookId, ids) {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function workerLoop() {
   while (true) {
+    if (!isRedisReady()) {
+      console.log("⏳ Waiting for Redis...");
+      await sleep(2000);
+      continue;
+    }
+
     const task = await RedisManager.nextQueue();
     if (!task) {
       await new Promise(r => setTimeout(r, 3000)); // пауза коли черга пуста

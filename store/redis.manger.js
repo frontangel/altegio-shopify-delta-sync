@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import redis from "../services/redis.js";
+import redis, { isRedisReady } from "../services/redis.js";
 
 const STREAM_KEY = "webhook_logs";
 const QUEUE_KEY = "queue";
@@ -44,6 +44,10 @@ export const RedisManager = {
   },
 
   async nextQueue() {
+    if (!isRedisReady()) {
+      return null;
+    }
+
     const raw = await redis.lpop("queue:correction");
     return raw ? JSON.parse(raw) : null;
   },

@@ -3,6 +3,7 @@ import Redis from "ioredis";
 const REDIS_URL = process.env.REDIS_URL;
 
 let redis;
+let isReady = false;
 
 if (!REDIS_URL) {
   console.error("❌ REDIS_URL is not set");
@@ -28,6 +29,7 @@ redis.on("connect", () => {
 
 redis.on("ready", () => {
   console.log("🚀 Redis ready");
+  isReady = true;
 });
 
 redis.on("error", (err) => {
@@ -36,10 +38,15 @@ redis.on("error", (err) => {
 
 redis.on("close", () => {
   console.warn("⚠️ Redis connection closed");
+  isReady = false;
 });
 
 redis.on("reconnecting", () => {
   console.warn("🔄 Redis reconnecting...");
 });
+
+export function isRedisReady() {
+  return isReady;
+}
 
 export default redis;
