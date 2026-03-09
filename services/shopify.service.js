@@ -195,11 +195,53 @@ export async function setAbsoluteQuantity(inventoryItemId, quantity) {
   try {
     const result = await requestWithThrottle(mutation, variables);
     if (result.inventorySetQuantities.userErrors?.length > 0) {
-      throw new Error('Shopify returned userErrors');
+      const errors = result.inventorySetQuantities.userErrors.map(e => `${e.field}: ${e.message}`).join(', ');
+      throw new Error(`Shopify userErrors: ${errors}`);
     }
+    return result;
   } catch (e) {
-    console.error('Failed to set quantity:', JSON.stringify(e.response?.errors[0]?.extensions, null, 2) || e.message);
+    console.error('[Shopify] Failed to set quantity:', {
+      inventoryItemId,
+      quantity,
+      error: e.message,
+      details: e.response?.errors?.[0]?.extensions
+    });
     throw e;
+  }
+}
+
+export async function verifyQuantity(inventoryItemId, expectedQuantity) {
+  try {
+    const item = await getInventoryItemById(inventoryItemId);
+    const levels = item.inventoryLevels || [];
+
+    // Find the level for our location
+    const targetLevel = levels.find(level => level.location?.id === locationId);
+
+    if (!targetLevel) {
+      console.warn(`[Shopify] Verification warning: No inventory level found for location ${locationId}`);
+      return { verified: false, reason: 'location_not_found' };
+    }
+
+    const quantities = targetLevel.quantities || [];
+    const availableQty = quantities.find(q => q.name === 'available');
+    const actualQuantity = availableQty?.quantity ?? 0;
+
+    const verified = actualQuantity === expectedQuantity;
+
+    if (!verified) {
+      console.error(`[Shopify] Verification FAILED: Expected ${expectedQuantity}, got ${actualQuantity} for ${inventoryItemId}`);
+    }
+
+    return {
+      verified,
+      expected: expectedQuantity,
+      actual: actualQuantity,
+      inventoryItemId
+    };
+  } catch (error) {
+    console.error('[Shopify] Verification error:', error.message);
+    return { verified: false, reason: 'verification_error', error: error.message };
   }
 }
 
@@ -274,22 +316,54 @@ export async function requestWithThrottle(query, variables = {}, { maxRetries = 
       const cost = err?.response?.extensions?.cost;
       const throttle = cost?.throttleStatus;
 
-      if (code !== 'THROTTLED' && !throttle) throw err;
+      // Check if it's a throttle error
+      const isThrottled = code === 'THROTTLED' || throttle;
+
+      // Check if it's a network error
+      const isNetworkError = !err.response && (
+        err.code === 'ECONNRESET' ||
+        err.code === 'ETIMEDOUT' ||
+        err.code === 'ENOTFOUND' ||
+        err.code === 'ECONNREFUSED'
+      );
+
+      // Check if it's a 5xx server error
+      const isServerError = err.response?.status >= 500 && err.response?.status < 600;
+
+      // Retry on throttle, network errors, or server errors
+      if (!isThrottled && !isNetworkError && !isServerError) {
+        throw err;
+      }
 
       attempt += 1;
       if (attempt > maxRetries) {
-        throw new Error(`Shopify THROTTLED: перевищено кількість спроб (${maxRetries}). ${err.message}`);
+        const errorType = isThrottled ? 'THROTTLED' : isNetworkError ? 'NETWORK_ERROR' : 'SERVER_ERROR';
+        throw new Error(`Shopify ${errorType}: перевищено кількість спроб (${maxRetries}). ${err.message}`);
       }
 
-      const requested = cost?.requestedQueryCost ?? 1000;
-      const available = throttle?.currentlyAvailable ?? 0;
-      const restoreRate = throttle?.restoreRate ?? 50; // кредити/сек
-      const deficit = Math.max(0, requested - available);
-      const waitSec = Math.max(1.5, Math.ceil(deficit / restoreRate));
-      const jitterMs = Math.floor(Math.random() * 300);
-      const waitMs = waitSec * 1000 + jitterMs;
+      let waitMs;
 
-      console.warn(`[Shopify] THROTTLED. requested=${requested}, available=${available}, rate=${restoreRate}/s, attempt=${attempt}. wait≈${waitMs}ms`);
+      if (isThrottled) {
+        const requested = cost?.requestedQueryCost ?? 1000;
+        const available = throttle?.currentlyAvailable ?? 0;
+        const restoreRate = throttle?.restoreRate ?? 50; // кредити/сек
+        const deficit = Math.max(0, requested - available);
+        const waitSec = Math.max(1.5, Math.ceil(deficit / restoreRate));
+        const jitterMs = Math.floor(Math.random() * 300);
+        waitMs = waitSec * 1000 + jitterMs;
+
+        console.warn(`[Shopify] THROTTLED. requested=${requested}, available=${available}, rate=${restoreRate}/s, attempt=${attempt}. wait≈${waitMs}ms`);
+      } else {
+        // Exponential backoff for network/server errors
+        const baseDelay = 1000;
+        const exponentialDelay = baseDelay * Math.pow(2, attempt - 1);
+        const jitterMs = Math.floor(Math.random() * 500);
+        waitMs = Math.min(exponentialDelay + jitterMs, 30000); // Max 30 seconds
+
+        const errorType = isNetworkError ? 'Network error' : 'Server error';
+        console.warn(`[Shopify] ${errorType}. attempt=${attempt}/${maxRetries}. wait≈${waitMs}ms. Error: ${err.message}`);
+      }
+
       _lastThrottle.attempts += 1;
       _lastThrottle.waitedMs += waitMs;
 

@@ -5,6 +5,7 @@ import { RedisManager } from './store/redis.manger.js';
 import { waitUntilReady } from './middleware/waitReady.middleware.js';
 import { basicAuthMiddleware } from './middleware/baseAuth.middleware.js';
 import { useUtils } from './utils/index.js';
+import { webhookSecurityMiddleware } from './utils/webhookSecurity.js';
 import { validateRulesStep } from './steps/validate-rules.step.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,6 +16,7 @@ import * as ShopifyService from './services/shopify.service.js';
 import * as AltegioService from './services/altegio.service.js';
 
 const PORT = process.env.PORT || 3000;
+const ALTEGIO_STORAGE_ID = parseInt(process.env.ALTEGIO_STORAGE_ID || '2557508', 10);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -23,7 +25,7 @@ app.use(express.json());
 
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
-app.use(['/', '/sku', '/db', '/logs', '/debug/redis/flush', '/queue', '/double'], basicAuthMiddleware, waitUntilReady);
+app.use(['/', '/sku', '/db', '/logs', '/debug/redis/flush', '/queue', '/queue/processing', '/queue/dead-letter', '/double'], basicAuthMiddleware, waitUntilReady);
 
 app.get('/', async (req, res) => {
   res.render('help')
@@ -62,15 +64,35 @@ app.get('/sync/:id', async (req, res) => {
   const quantity = Number(req.query.q)
 
   const inventoryItemId = await RedisManager.getSkuMapping(sku);
+  if (!inventoryItemId) {
+    return res.status(404).json({ error: 'SKU not found', sku });
+  }
+
   if (!req.query.q?.trim() || isNaN(quantity)) {
     const inventoryItem = await ShopifyService.getInventoryItemById(inventoryItemId)
     return res.json({inventoryItem})
   }
 
-  await new Promise(r => setTimeout(r, 1000));
-  const inventoryItem = await ShopifyService.getInventoryItemById(inventoryItemId)
-  await ShopifyService.setAbsoluteQuantity(inventoryItemId, quantity)
-  res.json({status: 'ok', message: 'Sync started', inventoryItem });
+  // Create a manual sync task instead of directly updating
+  const hookId = await RedisManager.setWebhookLogs({
+    status: 'waiting',
+    type: 'manual_sync',
+    resource: 'manual',
+    reason: `Manual sync: ${sku} = ${quantity}`,
+    json: JSON.stringify({ sku, quantity, inventoryItemId })
+  });
+
+  // Add to queue using a fake goodId (we already have the SKU)
+  // We'll need to handle this differently in the worker
+  await RedisManager.setQueue(hookId, `manual:${sku}:${quantity}:${inventoryItemId}`);
+
+  res.json({
+    status: 'ok',
+    message: 'Sync task queued',
+    hookId,
+    sku,
+    quantity
+  });
 })
 
 app.get('/inventory', async (req, res) => {
@@ -79,8 +101,36 @@ app.get('/inventory', async (req, res) => {
 })
 
 app.get('/queue', async (req, res) => {
-  const logs = await RedisManager.getQueue();
-  return res.json(logs);
+  const [correction, processing, deadLetter] = await Promise.all([
+    RedisManager.getQueue(),
+    RedisManager.getProcessingQueue(),
+    RedisManager.getDeadLetterQueue()
+  ]);
+
+  return res.json({
+    correction: {
+      count: correction.length,
+      tasks: correction
+    },
+    processing: {
+      count: processing.length,
+      tasks: processing
+    },
+    deadLetter: {
+      count: deadLetter.length,
+      tasks: deadLetter
+    }
+  });
+});
+
+app.get('/queue/processing', async (req, res) => {
+  const processing = await RedisManager.getProcessingQueue();
+  return res.json({ count: processing.length, tasks: processing });
+});
+
+app.get('/queue/dead-letter', async (req, res) => {
+  const deadLetter = await RedisManager.getDeadLetterQueue();
+  return res.json({ count: deadLetter.length, tasks: deadLetter });
 });
 
 app.get('/debug/redis/flush', async (req, res) => {
@@ -108,12 +158,12 @@ app.get('/sku', async (req, res) => {
   return res.json({shopifyInventoryId});
 });
 
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', webhookSecurityMiddleware, async (req, res) => {
   const operationRules = {
-    goods_operations_sale: {type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: 2557508},
-    goods_operations_receipt: {type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: 2557508},
-    goods_operations_stolen: {type_id: 4, type: 'Product write-off', skipStatus: ['update'], onlyStorageId: 2557508},
-    goods_operations_move: {type_id: 0, type: 'Moving products', onlyStorageId: 2557508, onlyStatus: ['create']},
+    goods_operations_sale: {type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
+    goods_operations_receipt: {type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
+    goods_operations_stolen: {type_id: 4, type: 'Product write-off', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
+    goods_operations_move: {type_id: 0, type: 'Moving products', onlyStorageId: ALTEGIO_STORAGE_ID, onlyStatus: ['create']},
     record: {onlyStatus: 'update', onlyPaidFull: 1}
   };
 
