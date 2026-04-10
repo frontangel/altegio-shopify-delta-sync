@@ -159,6 +159,13 @@ app.get('/sku', async (req, res) => {
 });
 
 app.post('/webhook', webhookSecurityMiddleware, async (req, res) => {
+  console.log('[Webhook] received', {
+    resource: req.body?.resource || null,
+    status: req.body?.status || null,
+    type: req.body?.data?.type || null,
+    type_id: req.body?.data?.type_id || null
+  });
+
   const operationRules = {
     goods_operations_sale: {type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
     goods_operations_receipt: {type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
@@ -207,16 +214,25 @@ app.post('/webhook', webhookSecurityMiddleware, async (req, res) => {
 
   if (ctx.error) {
     const hookId = await RedisManager.setWebhookLogs({...ctx.log, resource, type: resourceType, json: JSON.stringify(req.body)});
+    console.warn('[Webhook] rejected', { hookId, reason: ctx.log.reason, resource, type: resourceType });
     return res.status(400).json({error: true, message: ctx.log.reason, hookId});
   }
 
   if (ctx.done) {
     const hookId = await RedisManager.setWebhookLogs({...ctx.log, resource, type: resourceType, json: JSON.stringify(req.body)});
+    console.log('[Webhook] skipped', { hookId, reason: ctx.log.reason, resource, type: resourceType });
     return res.status(200).json({status: ctx.log.status, message: ctx.log.reason, hookId});
   }
 
   const hookId = await RedisManager.setWebhookLogs({ status: 'waiting', type: resourceType, resource, reason: ctx.state.product_ids.join(), json: JSON.stringify(req.body) });
-  await addIdsToQueue(hookId, ...ctx.state.product_ids);
+  await addIdsToQueue(hookId, ctx.state.product_ids);
+  console.log('[Webhook] queued', {
+    hookId,
+    resource,
+    type: resourceType,
+    productsCount: ctx.state.product_ids.length,
+    productIds: ctx.state.product_ids
+  });
 
   return res.json({ hookId, ...ctx.state });
 });

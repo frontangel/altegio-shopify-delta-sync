@@ -13,11 +13,40 @@ const ENABLE_VERIFICATION = process.env.ENABLE_SHOPIFY_VERIFICATION !== 'false';
 const ALTEGIO_COMPANY_ID = process.env.ALTEGIO_COMPANY_ID || '1275575';
 const ALTEGIO_STORAGE_ID = parseInt(process.env.ALTEGIO_STORAGE_ID || '2557508', 10);
 
+function taskTag(task) {
+  return `[Sync hookId=${task.hookId} goodId=${task.id} worker=${WORKER_ID}]`;
+}
+
+function logStep(task, step, details = {}) {
+  const payload = {
+    step,
+    ...details
+  };
+  console.log(`${taskTag(task)} ${JSON.stringify(payload)}`);
+}
+
+function logError(task, step, error, details = {}) {
+  const payload = {
+    step,
+    error: error?.message || String(error),
+    ...details
+  };
+  console.error(`${taskTag(task)} ${JSON.stringify(payload)}`);
+}
+
+function getLocationAvailableQuantity(item, locationId) {
+  const levels = item?.inventoryLevels || [];
+  const level = levels.find(l => l?.location?.id === locationId);
+  const available = level?.quantities?.find(q => q?.name === 'available');
+  return available?.quantity ?? null;
+}
+
 export async function addIdsToQueue(hookId, ids) {
   const idArray = Array.isArray(ids) ? ids : [ids]
 
   for (const id of idArray) {
     await RedisManager.setQueue(hookId, id)
+    console.log(`[Queue] queued task hookId=${hookId} goodId=${id}`);
   }
 }
 
@@ -40,10 +69,19 @@ async function workerLoop() {
       continue;
     }
 
+    logStep(task, 'queue.task.picked', {
+      queueFrom: 'queue:correction',
+      queueTo: 'queue:processing',
+      retry: task.retry || 0,
+      createdAt: task.createdAt || null,
+      retriedAt: task.retriedAt || null
+    });
+
     try {
       await processNextId(task);
       // Task completed successfully - remove from processing queue
       await RedisManager.completeTask(task);
+      logStep(task, 'queue.task.completed');
     } catch (err) {
       const retryCount = task.retry || 0;
 
@@ -58,6 +96,10 @@ async function workerLoop() {
           status: 'failed',
           reason: `Failed after ${MAX_RETRIES} retries: ${err.message}`
         });
+        logError(task, 'queue.task.dead_letter', err, {
+          attempts: retryCount,
+          maxRetries: MAX_RETRIES
+        });
       } else {
         console.warn(`⚠️ Task failed (attempt ${retryCount + 1}/${MAX_RETRIES}), retrying:`, {
           hookId: task.hookId,
@@ -65,6 +107,10 @@ async function workerLoop() {
           error: err.message
         });
         await RedisManager.retryQueue(task);
+        logError(task, 'queue.task.retry_scheduled', err, {
+          nextRetry: retryCount + 1,
+          maxRetries: MAX_RETRIES
+        });
       }
     }
   }
@@ -99,14 +145,25 @@ export async function processNextId(task) {
     altegio_sku: '',
     quantity: null,
     inventoryItemId: null,
+    shopifyQuantityBefore: null,
+    shopifyQuantityAfter: null,
     workerId: WORKER_ID
   }
 
   try {
+    logStep(task, 'sync.start', {
+      source: 'Altegio',
+      target: 'Shopify',
+      companyId: ALTEGIO_COMPANY_ID,
+      storageId: ALTEGIO_STORAGE_ID
+    });
+
     // Check idempotency - skip if already processed
     const alreadyProcessed = await RedisManager.checkIdempotency(idempotencyKey);
     if (alreadyProcessed) {
-      console.log(`⏭️ Skipping already processed task: ${idempotencyKey}`);
+      logStep(task, 'sync.skipped.idempotent', {
+        idempotencyKey
+      });
       await RedisManager.updateLogWebhook(hookId, {
         status: 'skipped',
         reason: 'Already processed (idempotent)'
@@ -115,7 +172,7 @@ export async function processNextId(task) {
     }
 
     // --- 1) Запит у Altegio ---
-    console.log(`[Worker ${WORKER_ID}] Processing task ${hookId} - goodId: ${goodId}`);
+    logStep(task, 'altegio.fetch.start');
 
     const productRes = await AltegioService.fetchProduct(ALTEGIO_COMPANY_ID, goodId);
     const data = productRes?.data;
@@ -143,14 +200,29 @@ export async function processNextId(task) {
 
     const amounts = data.actual_amounts || [];
     ctx.quantity = amounts.find(a => a.storage_id === ALTEGIO_STORAGE_ID)?.amount ?? 0;
+    logStep(task, 'altegio.fetch.success', {
+      altegioGoodId: goodId,
+      altegioSku: ctx.altegio_sku,
+      altegioQuantity: ctx.quantity,
+      storageId: ALTEGIO_STORAGE_ID
+    });
 
     // --- 2) Acquire distributed lock for this SKU ---
+    logStep(task, 'lock.acquire.start', {
+      sku: ctx.altegio_sku
+    });
     const lockAcquired = await RedisManager.acquireLock(ctx.altegio_sku, WORKER_ID, 30);
     if (!lockAcquired) {
-      console.log(`🔒 Lock not acquired for SKU ${ctx.altegio_sku}, another worker is processing it`);
+      logStep(task, 'lock.acquire.failed', {
+        sku: ctx.altegio_sku,
+        reason: 'already_locked'
+      });
       // Re-queue the task to try again later
       throw new Error('Lock not acquired, will retry');
     }
+    logStep(task, 'lock.acquire.success', {
+      sku: ctx.altegio_sku
+    });
 
     try {
       // --- 3) inventory item id ---
@@ -166,19 +238,49 @@ export async function processNextId(task) {
       }
 
       ctx.inventoryItemId = inventoryItemId;
+      logStep(task, 'mapping.found', {
+        altegioSku: ctx.altegio_sku,
+        shopifyInventoryItemId: inventoryItemId
+      });
+
+      try {
+        const currentInventory = await ShopifyService.getInventoryItemById(inventoryItemId);
+        ctx.shopifyQuantityBefore = getLocationAvailableQuantity(currentInventory, process.env.SF_CONST_LOCATION_ID);
+      } catch (readErr) {
+        logError(task, 'shopify.quantity_before.read_failed', readErr, {
+          shopifyInventoryItemId: inventoryItemId
+        });
+      }
 
       // --- 4) Shopify update ---
-      console.log(`[Worker ${WORKER_ID}] Updating Shopify: ${inventoryItemId} = ${ctx.quantity}`);
+      logStep(task, 'shopify.update.start', {
+        sourceSystem: 'Altegio',
+        targetSystem: 'Shopify',
+        altegioSku: ctx.altegio_sku,
+        shopifyInventoryItemId: inventoryItemId,
+        quantityFrom: ctx.shopifyQuantityBefore,
+        quantityTo: ctx.quantity
+      });
       await ShopifyService.setAbsoluteQuantity(inventoryItemId, ctx.quantity);
+      logStep(task, 'shopify.update.success', {
+        shopifyInventoryItemId: inventoryItemId,
+        quantityTo: ctx.quantity
+      });
 
       // --- 5) Verify update (optional) ---
       let verificationResult = null;
       if (ENABLE_VERIFICATION) {
         await sleep(500); // Brief delay for Shopify to process
         verificationResult = await ShopifyService.verifyQuantity(inventoryItemId, ctx.quantity);
+        ctx.shopifyQuantityAfter = verificationResult?.actual ?? null;
 
         if (!verificationResult.verified) {
-          console.error(`❌ Verification failed for ${inventoryItemId}:`, verificationResult);
+          logStep(task, 'shopify.verify.failed', {
+            altegioSku: ctx.altegio_sku,
+            shopifyInventoryItemId: inventoryItemId,
+            expectedQuantity: ctx.quantity,
+            actualQuantity: verificationResult.actual ?? null
+          });
           await RedisManager.updateLogWebhook(hookId, {
             status: 'warning',
             reason: `Update succeeded but verification failed: expected ${ctx.quantity}, got ${verificationResult.actual}`,
@@ -188,7 +290,12 @@ export async function processNextId(task) {
           });
           // Don't throw error - update was sent successfully
         } else {
-          console.log(`✅ Verification passed for ${inventoryItemId}`);
+          logStep(task, 'shopify.verify.success', {
+            altegioSku: ctx.altegio_sku,
+            shopifyInventoryItemId: inventoryItemId,
+            expectedQuantity: ctx.quantity,
+            actualQuantity: verificationResult.actual ?? null
+          });
         }
       }
 
@@ -210,20 +317,35 @@ export async function processNextId(task) {
         verified: verificationResult?.verified ?? null
       });
 
-      console.log(`✅ [Worker ${WORKER_ID}] Task completed: ${hookId}`);
+      logStep(task, 'sync.success', {
+        sourceSystem: 'Altegio',
+        targetSystem: 'Shopify',
+        altegioGoodId: goodId,
+        altegioSku: ctx.altegio_sku,
+        shopifyInventoryItemId: inventoryItemId,
+        altegioQuantity: ctx.quantity,
+        shopifyQuantityBefore: ctx.shopifyQuantityBefore,
+        shopifyQuantityAfter: ctx.shopifyQuantityAfter,
+        verified: verificationResult?.verified ?? null
+      });
 
     } finally {
       // Always release the lock
       await RedisManager.releaseLock(ctx.altegio_sku, WORKER_ID);
+      logStep(task, 'lock.released', {
+        sku: ctx.altegio_sku
+      });
     }
 
   } catch (err) {
-    console.error(`❌ [Worker ${WORKER_ID}] Task failed:`, {
-      hookId,
-      goodId,
-      sku: ctx.altegio_sku,
-      error: err.message,
-      stack: err.stack
+    logError(task, 'sync.failed', err, {
+      sourceSystem: 'Altegio',
+      targetSystem: 'Shopify',
+      altegioGoodId: goodId,
+      altegioSku: ctx.altegio_sku,
+      shopifyInventoryItemId: ctx.inventoryItemId,
+      altegioQuantity: ctx.quantity,
+      shopifyQuantityBefore: ctx.shopifyQuantityBefore
     });
 
     await RedisManager.updateLogWebhook(hookId, {
