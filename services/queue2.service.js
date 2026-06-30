@@ -359,12 +359,25 @@ export async function processNextId(task) {
   }
 }
 
-// Start worker loop
-workerLoop()
-  .then(() => console.log('✅ Queue worker started successfully'))
-  .catch(err => console.error('❌ Queue worker failed to start:', err));
+let started = false;
+export function startQueueWorker() {
+  if (started) return;
+  started = true;
 
-// Start stale task recovery
-staleTaskRecovery()
-  .then(() => console.log('✅ Stale task recovery started'))
-  .catch(err => console.error('❌ Stale task recovery failed to start:', err));
+  // Start worker loop
+  workerLoop()
+    .then(() => console.log('✅ Queue worker started successfully'))
+    .catch(err => console.error('❌ Queue worker failed to start:', err));
+
+  // Start stale task recovery
+  staleTaskRecovery()
+    .then(() => console.log('✅ Stale task recovery started'))
+    .catch(err => console.error('❌ Stale task recovery failed to start:', err));
+}
+
+// Автостарт воркера, окрім випадку, коли його явно вимкнено. API-процес виставляє
+// QUEUE_WORKER_AUTOSTART=false, щоб воркер крутився лише в окремому worker-процесі
+// і не голодував event-loop, який віддає відповіді на вебхуки.
+if (process.env.QUEUE_WORKER_AUTOSTART !== 'false') {
+  startQueueWorker();
+}

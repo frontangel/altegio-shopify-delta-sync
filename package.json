@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
+    "start:api": "QUEUE_WORKER_AUTOSTART=false WARMUP_ON_START=false node index.js",
+    "start:worker": "node worker.js",
     "start:dev": "nodemon index.js",
     "test": "NODE_ENV=test jest --coverage",
     "test:watch": "NODE_ENV=test jest --watch",
