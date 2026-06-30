@@ -92,11 +92,50 @@
         .w-140 { width: 140px; }
         .w-100 { width: 100px; }
         .w-60 { width: 60px; }
+
+        .filters {
+            display: flex;
+            gap: 12px;
+            margin: 10px 0 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .filter-field input {
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            padding: 6px 8px;
+            min-width: 200px;
+            font-size: 0.85rem;
+        }
+
+        .filter-meta {
+            color: #666;
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 <body>
 
 <h2>Webhook Logs</h2>
+
+<div class="filters">
+    <label class="filter-field">
+        <span>Фільтр по даті (підрядок)</span>
+        <input id="filter-date" type="text" placeholder="Напр. 10.04.2026 або 14:2">
+    </label>
+    <label class="filter-field">
+        <span>Пошук по Altegio SKU</span>
+        <input id="filter-sku" type="text" placeholder="Напр. ABC-123">
+    </label>
+    <div id="filter-meta" class="filter-meta"></div>
+</div>
 
 <table>
     <thead>
@@ -114,7 +153,9 @@
     </thead>
     <tbody>
     <% logs.forEach((log, index) => { const jsonId = `json-${index}`; %>
-        <tr>
+        <tr class="log-row"
+            data-date="<%= (log.date || '').toLowerCase() %>"
+            data-sku="<%= (log.altegio_sku || '').toLowerCase() %>">
             <td class="w-260"><%= log.id %></td>
             <td class="w-140 text-center"><%= log.date %></td>
             <td class="w-100 text-center"><%= log.type %></td>
@@ -143,6 +184,10 @@
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     const buttons = document.querySelectorAll('.json-toggle-btn');
+    const dateInput = document.getElementById('filter-date');
+    const skuInput = document.getElementById('filter-sku');
+    const meta = document.getElementById('filter-meta');
+    const rows = Array.from(document.querySelectorAll('tr.log-row'));
 
     buttons.forEach(btn => {
       btn.addEventListener('click', () => {
@@ -158,6 +203,38 @@
         el.style.display = el.style.display === 'block' ? 'none' : 'block';
       });
     });
+
+    function applyFilters() {
+      const dateQuery = (dateInput.value || '').toLowerCase().trim();
+      const skuQuery = (skuInput.value || '').toLowerCase().trim();
+      let visible = 0;
+
+      rows.forEach((row) => {
+        const rowDate = row.dataset.date || '';
+        const rowSku = row.dataset.sku || '';
+        const dateMatch = !dateQuery || rowDate.includes(dateQuery);
+        const skuMatch = !skuQuery || rowSku.includes(skuQuery);
+        const isVisible = dateMatch && skuMatch;
+
+        row.style.display = isVisible ? '' : 'none';
+        const jsonRow = row.nextElementSibling;
+        if (jsonRow && jsonRow.classList.contains('json-row')) {
+          jsonRow.style.display = isVisible ? '' : 'none';
+          if (!isVisible) {
+            const jsonContent = jsonRow.querySelector('.json-content');
+            if (jsonContent) jsonContent.style.display = 'none';
+          }
+        }
+
+        if (isVisible) visible += 1;
+      });
+
+      meta.textContent = `Показано: ${visible} з ${rows.length}`;
+    }
+
+    dateInput.addEventListener('input', applyFilters);
+    skuInput.addEventListener('input', applyFilters);
+    applyFilters();
   });
 </script>
 
