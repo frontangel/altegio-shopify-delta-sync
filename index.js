@@ -214,30 +214,46 @@ app.post('/webhook', webhookSecurityMiddleware, async (req, res) => {
 
   const resource = req.body.resource || ''
   const resourceType = req.body.data?.type || ''
+  const payload = JSON.stringify(req.body);
 
+  // ACK-first: Altegio розриває з'єднання, якщо відповідь не прийшла за 10с
+  // (CURL error 28). Тому спершу швидко відповідаємо, а запис у Redis/чергу
+  // робимо у фоні — HTTP-відповідь ніколи не чекає на Redis/мережу.
   if (ctx.error) {
-    const hookId = await RedisManager.setWebhookLogs({...ctx.log, resource, type: resourceType, json: JSON.stringify(req.body)});
-    console.warn('[Webhook] rejected', { hookId, reason: ctx.log.reason, resource, type: resourceType });
-    return res.status(400).json({error: true, message: ctx.log.reason, hookId});
+    res.status(400).json({ error: true, message: ctx.log.reason });
+    RedisManager.setWebhookLogs({ ...ctx.log, resource, type: resourceType, json: payload })
+      .then(hookId => console.warn('[Webhook] rejected', { hookId, reason: ctx.log.reason, resource, type: resourceType }))
+      .catch(err => console.error('[Webhook] log persist failed (rejected):', err?.message || err));
+    return;
   }
 
   if (ctx.done) {
-    const hookId = await RedisManager.setWebhookLogs({...ctx.log, resource, type: resourceType, json: JSON.stringify(req.body)});
-    console.log('[Webhook] skipped', { hookId, reason: ctx.log.reason, resource, type: resourceType });
-    return res.status(200).json({status: ctx.log.status, message: ctx.log.reason, hookId});
+    res.status(200).json({ status: ctx.log.status, message: ctx.log.reason });
+    RedisManager.setWebhookLogs({ ...ctx.log, resource, type: resourceType, json: payload })
+      .then(hookId => console.log('[Webhook] skipped', { hookId, reason: ctx.log.reason, resource, type: resourceType }))
+      .catch(err => console.error('[Webhook] log persist failed (skipped):', err?.message || err));
+    return;
   }
 
-  const hookId = await RedisManager.setWebhookLogs({ status: 'waiting', type: resourceType, resource, reason: ctx.state.product_ids.join(), json: JSON.stringify(req.body) });
-  await addIdsToQueue(hookId, ctx.state.product_ids);
-  console.log('[Webhook] queued', {
-    hookId,
-    resource,
-    type: resourceType,
-    productsCount: ctx.state.product_ids.length,
-    productIds: ctx.state.product_ids
-  });
+  const productIds = ctx.state.product_ids;
+  res.status(200).json({ status: 'accepted', productsCount: productIds.length });
 
-  return res.json({ hookId, ...ctx.state });
+  // Запис лога + постановка в чергу — після відповіді.
+  (async () => {
+    try {
+      const hookId = await RedisManager.setWebhookLogs({ status: 'waiting', type: resourceType, resource, reason: productIds.join(), json: payload });
+      await addIdsToQueue(hookId, productIds);
+      console.log('[Webhook] queued', {
+        hookId,
+        resource,
+        type: resourceType,
+        productsCount: productIds.length,
+        productIds
+      });
+    } catch (err) {
+      console.error('[Webhook] enqueue failed:', err?.message || err, { resource, type: resourceType, productIds });
+    }
+  })();
 });
 
 
