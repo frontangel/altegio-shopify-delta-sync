@@ -169,11 +169,14 @@ app.post('/webhook', webhookSecurityMiddleware, async (req, res) => {
     type_id: req.body?.data?.type_id || null
   });
 
+  // Не матчимо по data.type: це людиночитана мітка, яку Altegio змінює
+  // без попередження ('Product sales' → 'Product sale', липень 2026) —
+  // надійний дискримінатор лише числовий type_id.
   const operationRules = {
-    goods_operations_sale: {type_id: 1, type: 'Product sales', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
-    goods_operations_receipt: {type_id: 3, type: 'Product arrival', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
-    goods_operations_stolen: {type_id: 4, type: 'Product write-off', skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
-    goods_operations_move: {type_id: 0, type: 'Moving products', onlyStorageId: ALTEGIO_STORAGE_ID, onlyStatus: ['create']},
+    goods_operations_sale: {type_id: 1, skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
+    goods_operations_receipt: {type_id: 3, skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
+    goods_operations_stolen: {type_id: 4, skipStatus: ['update'], onlyStorageId: ALTEGIO_STORAGE_ID},
+    goods_operations_move: {type_id: 0, onlyStorageId: ALTEGIO_STORAGE_ID, onlyStatus: ['create']},
     record: {onlyStatus: 'update', onlyPaidFull: 1}
   };
 
