@@ -1,8 +1,15 @@
 import crypto from 'crypto';
+import { debuglog } from 'util';
 import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js'
 import { RedisManager } from '../store/redis.manger.js';
 import {isRedisReady} from "./redis.js";
+
+// Verbose per-step sync logging is opt-in via NODE_DEBUG=queue2 (Node's built-in
+// debug module). This keeps routine step logs out of production output entirely,
+// so we stay well under Railway's logging rate limit while still allowing the
+// verbose trail to be enabled locally/for debugging when needed.
+const debug = debuglog('queue2');
 
 const WORKER_ID = crypto.randomUUID(); // Unique worker identifier
 const MAX_RETRIES = 3; // Maximum retry attempts
@@ -23,12 +30,19 @@ function taskTag(task) {
   return `[Sync hookId=${task.hookId} ${identity} worker=${WORKER_ID}]`;
 }
 
+// Routine sync steps are extremely high-volume (thousands of tasks/day, 10+
+// steps each) and were exceeding Railway's logging rate limit when emitted via
+// console.log(). They're now emitted at debug level only - enable them locally
+// or for troubleshooting by running with NODE_DEBUG=queue2. Critical lifecycle
+// events (task picked/completed/dead-lettered, stale task recovery) still use
+// console.log() directly so they remain visible in production.
 function logStep(task, step, details = {}) {
+  if (!debug.enabled) return;
   const payload = {
     step,
     ...details
   };
-  console.log(`${taskTag(task)} ${JSON.stringify(payload)}`);
+  debug(`${taskTag(task)} ${JSON.stringify(payload)}`);
 }
 
 function logError(task, step, error, details = {}) {
@@ -75,19 +89,16 @@ async function workerLoop() {
       continue;
     }
 
-    logStep(task, 'queue.task.picked', {
-      queueFrom: 'queue:correction',
-      queueTo: 'queue:processing',
-      retry: task.retry || 0,
-      createdAt: task.createdAt || null,
-      retriedAt: task.retriedAt || null
-    });
+    // Critical lifecycle event - kept at console.log() level so it stays
+    // visible in production without contributing to per-step log volume.
+    console.log(`${taskTag(task)} queue.task.picked retry=${task.retry || 0}`);
 
     try {
       await processNextId(task);
       // Task completed successfully - remove from processing queue
       await RedisManager.completeTask(task);
-      logStep(task, 'queue.task.completed');
+      // Critical lifecycle event - console.log() by design (see above).
+      console.log(`${taskTag(task)} queue.task.completed`);
     } catch (err) {
       const retryCount = task.retry || 0;
 
