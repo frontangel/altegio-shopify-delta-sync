@@ -8,6 +8,9 @@ const SKU_DOUBLE_KEY = "double_mapper";
 const LOGS_KEY = "webhook_logs";
 const LOGS_INDEX_KEY = "webhook_logs:index";
 const SKU_MAPPER_KEY = "sku_mapper";
+const SKU_MAPPING_REFRESHED_AT_KEY = "sku_mapper:refreshed_at";
+const RECONCILE_LAST_KEY = "reconcile:last";
+const RECONCILE_RUN_PREFIX = "reconcile:run:";
 const ARTICLE_MAPPER_KEY = "article_mapper";
 const NOTFOUND_PREFIX = 'notfound:';
 const NOT_FOUND_TTL = 10 * 60; // 10 хв у секундах
@@ -278,6 +281,49 @@ export const RedisManager = {
 
   async getDoubles() {
     return redis.hgetall(SKU_DOUBLE_KEY);
+  },
+
+  // Атомарна заміна всього мапінгу: будуємо тимчасовий hash і RENAME-имо його
+  // поверх SKU_MAPPER_KEY. Так з мапінгу зникають застарілі ключі (видалені /
+  // перейменовані в Shopify метаполя), а читачі ніколи не бачать напівпорожній hash.
+  async replaceSkuMappings(mapping) {
+    const entries = Object.entries(mapping || {});
+    if (entries.length === 0) {
+      // Порожній результат від Shopify — майже напевно збій, а не реальний
+      // каталог. Не затираємо робочий мапінг.
+      return 0;
+    }
+    const tmpKey = `${SKU_MAPPER_KEY}:tmp:${crypto.randomUUID()}`;
+    await redis.hset(tmpKey, Object.fromEntries(entries));
+    await redis.rename(tmpKey, SKU_MAPPER_KEY);
+    await redis.set(SKU_MAPPING_REFRESHED_AT_KEY, String(Date.now()));
+    return entries.length;
+  },
+
+  async getSkuMappingRefreshedAt() {
+    const raw = await redis.get(SKU_MAPPING_REFRESHED_AT_KEY);
+    const ts = Number(raw);
+    return Number.isFinite(ts) && ts > 0 ? ts : null;
+  },
+
+  async setReconcileSummary(summary) {
+    await redis.set(RECONCILE_LAST_KEY, JSON.stringify(summary));
+  },
+
+  async getReconcileSummary() {
+    const raw = await redis.get(RECONCILE_LAST_KEY);
+    try {
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  // Повертає true лише першому, хто «забронював» запуск на цю дату —
+  // захист від подвійного нічного reconcile (кілька інстансів / рестарт).
+  async claimReconcileRun(dateKey) {
+    const res = await redis.set(`${RECONCILE_RUN_PREFIX}${dateKey}`, String(Date.now()), 'NX', 'EX', 3 * 24 * 60 * 60);
+    return res === 'OK';
   },
 
   async setSkuMapping(sku, inventoryItemId) {

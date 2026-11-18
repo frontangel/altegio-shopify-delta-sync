@@ -14,6 +14,7 @@ import { addIdsToQueue } from './services/queue2.service.js';
 import redis from './services/redis.js';
 import * as ShopifyService from './services/shopify.service.js';
 import * as AltegioService from './services/altegio.service.js';
+import { runReconcile } from './services/reconcile.service.js';
 
 const PORT = process.env.PORT || 3000;
 const ALTEGIO_STORAGE_ID = parseInt(process.env.ALTEGIO_STORAGE_ID || '2557508', 10);
@@ -37,8 +38,18 @@ app.get('/', async (req, res) => {
 
 app.get('/healthz', async (req, res) => {
   const { isReady } = useStore();
-  const skuCacheSize = await RedisManager.getAllSkuMappingsSize()
-  res.json({ ok: true, ready: isReady(), skuCacheSize });
+  const [skuCacheSize, skuMappingRefreshedAt, lastReconcile] = await Promise.all([
+    RedisManager.getAllSkuMappingsSize(),
+    RedisManager.getSkuMappingRefreshedAt(),
+    RedisManager.getReconcileSummary()
+  ]);
+  res.json({
+    ok: true,
+    ready: isReady(),
+    skuCacheSize,
+    skuMappingRefreshedAt: skuMappingRefreshedAt ? new Date(skuMappingRefreshedAt).toISOString() : null,
+    lastReconcile
+  });
 });
 
 app.get('/double', async (req, res) => {
@@ -97,6 +108,20 @@ app.get('/sync/:id', async (req, res) => {
     quantity
   });
 })
+
+// Повна звірка Altegio → Shopify. За замовчуванням dry-run: лише повертає
+// список розбіжностей. ?dry=false — ставить у чергу виправлення (воркер
+// перечитує залишок з Altegio і виставляє його в Shopify).
+app.get('/reconcile', basicAuthMiddleware, async (req, res) => {
+  const dryRun = req.query.dry !== 'false';
+  try {
+    const result = await runReconcile({ dryRun, trigger: 'endpoint' });
+    return res.json(result);
+  } catch (err) {
+    const status = /already running/i.test(err?.message || '') ? 409 : 500;
+    return res.status(status).json({ error: err?.message || String(err) });
+  }
+});
 
 app.get('/inventory', async (req, res) => {
   const result = await ShopifyService.getInventoryItemById(req.query.id);
@@ -265,7 +290,6 @@ app.listen(PORT, () => {
 
   if (process.env.WARMUP_ON_START === 'true') {
     setTimeout(async () => {
-      await RedisManager.clearDoubles()
       useStore().getShopifyInventoryIdsBySku()
         .then(() => console.log('Cashing done.'))
         .catch(e => console.warn('Warmup failed:', e?.message || e));

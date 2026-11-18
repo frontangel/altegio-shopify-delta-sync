@@ -95,6 +95,70 @@ export async function fetchAllProducts() {
   return all; // масив product edges
 }
 
+// Скан для reconcile: для кожного активного варіанта з метаполем
+// sku_from_altegio повертає inventoryItemId і поточний available на нашій локації.
+export async function fetchAllVariantStock() {
+  const query = `
+    query($cursor: String, $locationId: ID!) {
+      products(first: 50, after: $cursor, sortKey: ID, query: "status:active") {
+        pageInfo { hasNextPage endCursor }
+        edges {
+          node {
+            id
+            title
+            status
+            variants(first: 50) {
+              edges {
+                node {
+                  id
+                  title
+                  inventoryItem {
+                    id
+                    inventoryLevel(locationId: $locationId) {
+                      quantities(names: ["available"]) { name quantity }
+                    }
+                  }
+                  metafield(namespace: "custom", key: "sku_from_altegio") { value }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const result = [];
+  let cursor = null;
+  do {
+    const res = await requestWithThrottle(query, { cursor, locationId });
+    const { edges = [], pageInfo } = res.products ?? {};
+    for (const { node: product } of edges) {
+      if (!product || product.status !== 'ACTIVE') continue;
+      for (const { node: variant } of (product.variants?.edges ?? [])) {
+        const altegioSku = variant?.metafield?.value?.trim();
+        const inventoryItemId = variant?.inventoryItem?.id;
+        if (!altegioSku || !inventoryItemId) continue;
+        const level = variant.inventoryItem.inventoryLevel;
+        const available = level
+          ? (level.quantities?.find(q => q.name === 'available')?.quantity ?? null)
+          : null;
+        result.push({
+          altegioSku,
+          inventoryItemId,
+          available,
+          title: variant.title && variant.title !== 'Default Title'
+            ? `${product.title} / ${variant.title}`
+            : product.title
+        });
+      }
+    }
+    cursor = pageInfo?.hasNextPage ? pageInfo.endCursor : null;
+  } while (cursor);
+
+  return result;
+}
+
 export async function getInventoryItemById(inventoryItemId) {
   const query = `
     query GetInventoryItem($id: ID!) {

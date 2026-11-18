@@ -4,6 +4,8 @@ describe('queue2 manual task processing', () => {
   let processNextId;
   let ShopifyService;
   let RedisManager;
+  let AltegioService;
+  let refreshSkuMappingIfStale;
 
   beforeEach(async () => {
     jest.resetModules();
@@ -38,8 +40,16 @@ describe('queue2 manual task processing', () => {
     };
 
     jest.unstable_mockModule('../services/shopify.service.js', () => ShopifyService);
-    jest.unstable_mockModule('../services/altegio.service.js', () => ({
-      fetchProduct: jest.fn()
+    AltegioService = {
+      fetchProduct: jest.fn().mockResolvedValue({
+        data: { article: '524105', actual_amounts: [{ storage_id: 2557508, amount: 1 }] }
+      })
+    };
+    refreshSkuMappingIfStale = jest.fn().mockResolvedValue(false);
+
+    jest.unstable_mockModule('../services/altegio.service.js', () => AltegioService);
+    jest.unstable_mockModule('../store/useStore.js', () => ({
+      useStore: () => ({ refreshSkuMappingIfStale })
     }));
     jest.unstable_mockModule('../store/redis.manger.js', () => ({
       RedisManager
@@ -69,5 +79,32 @@ describe('queue2 manual task processing', () => {
     expect(ShopifyService.verifyQuantity).toHaveBeenCalledWith('gid://shopify/InventoryItem/123', 5);
     expect(RedisManager.setIdempotency).toHaveBeenCalledTimes(1);
     expect(RedisManager.releaseLock).toHaveBeenCalledWith('SKU-ABC', expect.any(String));
+  });
+
+  it('refreshes a stale SKU mapping on miss and then syncs the good', async () => {
+    RedisManager.getSkuMapping = jest.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('gid://shopify/InventoryItem/new');
+    refreshSkuMappingIfStale.mockResolvedValue(true);
+    ShopifyService.verifyQuantity.mockResolvedValue({ verified: true, actual: 1 });
+
+    await processNextId({ hookId: 'hook-2', id: 23917730, retry: 0 });
+
+    expect(refreshSkuMappingIfStale).toHaveBeenCalledTimes(1);
+    expect(ShopifyService.setAbsoluteQuantity).toHaveBeenCalledWith('gid://shopify/InventoryItem/new', 1);
+  });
+
+  it('skips (without Shopify update) when SKU is still unmapped after refresh attempt', async () => {
+    RedisManager.getSkuMapping = jest.fn().mockResolvedValue(null);
+    refreshSkuMappingIfStale.mockResolvedValue(false);
+
+    await processNextId({ hookId: 'hook-3', id: 23917730, retry: 0 });
+
+    expect(refreshSkuMappingIfStale).toHaveBeenCalledTimes(1);
+    expect(ShopifyService.setAbsoluteQuantity).not.toHaveBeenCalled();
+    expect(RedisManager.updateLogWebhook).toHaveBeenCalledWith('hook-3', expect.objectContaining({
+      status: 'skipped',
+      reason: 'Inventory item id not found'
+    }));
   });
 });
