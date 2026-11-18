@@ -4,6 +4,7 @@ import * as AltegioService from '../services/altegio.service.js';
 import * as ShopifyService from '../services/shopify.service.js'
 import { RedisManager } from '../store/redis.manger.js';
 import {isRedisReady} from "./redis.js";
+import { useStore } from '../store/useStore.js';
 
 // Verbose per-step sync logging is opt-in via NODE_DEBUG=queue2 (Node's built-in
 // debug module). This keeps routine step logs out of production output entirely,
@@ -22,6 +23,16 @@ const ALTEGIO_STORAGE_ID = parseInt(process.env.ALTEGIO_STORAGE_ID || '2557508',
 const SHOPIFY_LOCATION_ID = process.env.SF_CONST_LOCATION_ID;
 const LOCK_TTL_SECONDS = 30;
 const LOCK_HEARTBEAT_INTERVAL_MS = 10000;
+const SKU_MISS_REFRESH_MIN_AGE_MS = Number(process.env.SKU_MISS_REFRESH_MIN_AGE_MS) || 10 * 60 * 1000;
+
+const { refreshSkuMappingIfStale } = useStore();
+
+// Shopify приймає лише цілі залишки, а в Altegio бувають дробові (вагові
+// товари, напр. 29.6). Продавати онлайн можна лише цілі одиниці — округлюємо вниз.
+export function toShopifyQuantity(amount) {
+  const n = Number(amount);
+  return Number.isFinite(n) ? Math.floor(n) : 0;
+}
 
 function taskTag(task) {
   const identity = task.taskType === 'manual'
@@ -236,7 +247,7 @@ export async function processNextId(task) {
       }
 
       const amounts = data.actual_amounts || [];
-      ctx.quantity = amounts.find(a => a.storage_id === ALTEGIO_STORAGE_ID)?.amount ?? 0;
+      ctx.quantity = toShopifyQuantity(amounts.find(a => a.storage_id === ALTEGIO_STORAGE_ID)?.amount ?? 0);
       logStep(task, 'altegio.fetch.success', {
         altegioGoodId: goodId,
         altegioSku: ctx.altegio_sku,
@@ -275,8 +286,22 @@ export async function processNextId(task) {
 
     try {
       // --- 3) inventory item id ---
-      const inventoryItemId = ctx.inventoryItemId || await RedisManager.getSkuMapping(ctx.altegio_sku);
+      let inventoryItemId = ctx.inventoryItemId || await RedisManager.getSkuMapping(ctx.altegio_sku);
+
+      // Промах по мапінгу: товар/метаполе могли додати в Shopify після
+      // останнього оновлення мапінгу. Оновлюємо (не частіше ніж раз на
+      // SKU_MISS_REFRESH_MIN_AGE_MS) і пробуємо ще раз.
+      if (!inventoryItemId && taskType !== 'manual') {
+        const refreshed = await refreshSkuMappingIfStale(SKU_MISS_REFRESH_MIN_AGE_MS);
+        if (refreshed) {
+          inventoryItemId = await RedisManager.getSkuMapping(ctx.altegio_sku);
+        }
+      }
+
       if (!inventoryItemId) {
+        // Раніше це був «тихий» skip, видимий лише в /logs — саме так
+        // розбіжності накопичувались місяцями непоміченими.
+        console.warn(`${taskTag(task)} mapping.not_found sku=${ctx.altegio_sku} altegioQty=${ctx.quantity}`);
         await RedisManager.updateLogWebhook(hookId, {
           status: 'skipped',
           reason: 'Inventory item id not found',

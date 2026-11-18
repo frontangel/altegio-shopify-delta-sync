@@ -116,6 +116,10 @@ BASIC_AUTH_PASS=strong_password_here
 # Features
 WARMUP_ON_START=true
 ENABLE_SHOPIFY_VERIFICATION=true  # Post-update consistency check
+SKU_REFRESH_INTERVAL_MS=3600000   # Worker: periodic SKU mapping refresh (default 1h)
+SKU_MISS_REFRESH_MIN_AGE_MS=600000 # Worker: on unknown SKU, refresh mapping if older than this (default 10m)
+RECONCILE_ENABLED=true            # Worker: nightly full Altegio → Shopify reconcile
+RECONCILE_HOUR=3                  # Hour (Europe/Kyiv) for the nightly reconcile
 ```
 
 ### 4. Start Server
@@ -212,6 +216,18 @@ Manual inventory sync (now uses queue for consistency)
 **Example:**
 ```bash
 curl -u admin:password "https://your-app.com/sync/ABC123?q=10"
+```
+
+#### `GET /reconcile?dry=true|false`
+Full stock comparison of every Shopify variant that has `custom.sku_from_altegio`
+against Altegio (`ALTEGIO_STORAGE_ID`). Defaults to a dry run that returns the diff list.
+`dry=false` queues a regular sync task per mismatched good. The worker re-reads the quantity
+from Altegio and sets it in Shopify as an absolute value (Altegio is the source of truth).
+The same reconcile runs nightly in the worker. The last summary is shown in `/healthz` (`lastReconcile`).
+
+```bash
+curl -u admin:password "https://your-app.com/reconcile"            # dry run
+curl -u admin:password "https://your-app.com/reconcile?dry=false"  # apply
 ```
 
 #### `GET /double`

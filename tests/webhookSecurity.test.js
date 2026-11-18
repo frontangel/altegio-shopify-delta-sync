@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { describe, expect, it, beforeEach } from '@jest/globals';
+import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { verifyWebhookSignature, webhookSecurityMiddleware } from '../utils/webhookSecurity.js';
 
 describe('webhookSecurity', () => {

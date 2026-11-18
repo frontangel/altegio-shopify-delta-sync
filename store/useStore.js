@@ -6,12 +6,11 @@ import { RedisManager } from './redis.manger.js';
 let shopifySkuInventoryPromise = null;
 let altegioArticlePromiseMap = new Map();
 let initialized = false;
+let lastRefreshAttemptAt = 0;
 
 
 
 export function useStore() {
-  const skus = {}
-
   const setAltegioArticleById = async (companyId, goodId) => {
     const candidate = await RedisManager.getArticle(goodId)
     if (candidate) return Promise.resolve(candidate);
@@ -35,6 +34,9 @@ export function useStore() {
     if (shopifySkuInventoryPromise) return shopifySkuInventoryPromise;
 
     shopifySkuInventoryPromise = (async () => {
+      lastRefreshAttemptAt = Date.now();
+      // sku -> [inventoryItemId, ...] (кілька — це дублікати метаполя)
+      const skus = {};
       try {
         const products = await ShopifyService.fetchAllProducts();
         for (const { node: product } of (products ?? [])) {
@@ -59,31 +61,43 @@ export function useStore() {
             const cleanSku = typeof sku === 'string' ? sku.trim() : null;
 
             if (cleanSku && inventoryItemId) {
-              if (cleanSku in skus) {
-                skus[cleanSku].push(inventoryItemId);
-              } else {
-                skus[cleanSku] = [inventoryItemId];
-              }
-              await RedisManager.setSkuMapping(cleanSku, inventoryItemId)
+              (skus[cleanSku] ??= []).push(inventoryItemId);
             }
           }
         }
+
+        // Останній варіант виграє — та сама поведінка, що й раніше з hset у циклі.
+        const mapping = Object.fromEntries(
+          Object.entries(skus).map(([sku, ids]) => [sku, ids[ids.length - 1]])
+        );
+        const size = await RedisManager.replaceSkuMappings(mapping);
+        await RedisManager.clearDoubles();
+        await RedisManager.setMultipleDoubles(skus);
         initialized = true;
+        console.log(`[Cache] SKU mapping refreshed: size=${size}`);
+        return size;
       }
       catch (e) {
-        console.error(e)
+        console.error('[Cache] SKU mapping refresh failed:', e?.message || e);
+        return null;
       }
       finally {
         shopifySkuInventoryPromise = null;
-        await RedisManager.setMultipleDoubles(skus)
-        const [skuMapperSize, notFoundCacheSize, notFound] = await Promise.all([RedisManager.getAllSkuMappingsSize(), RedisManager.getAllNotFoundRecords()]);
-        console.log(
-          `[Cache] skuMapper size=${skuMapperSize} notFoundCache size=${notFoundCacheSize}`
-        );
       }
     })();
 
     return shopifySkuInventoryPromise;
+  };
+
+  // Оновлює мапінг лише якщо він старший за maxAgeMs (і ми самі не пробували
+  // нещодавно) — щоб серія промахів по невідомому SKU не викликала шторм
+  // повних сканів каталогу Shopify. Повертає true, якщо оновлення відбулось.
+  const refreshSkuMappingIfStale = async (maxAgeMs) => {
+    const refreshedAt = await RedisManager.getSkuMappingRefreshedAt();
+    const last = Math.max(refreshedAt || 0, lastRefreshAttemptAt || 0);
+    if (Date.now() - last < maxAgeMs) return false;
+    const size = await getShopifyInventoryIdsBySku();
+    return size !== null;
   };
 
   const isReady = () => initialized;
@@ -91,6 +105,7 @@ export function useStore() {
   return {
     getAltegioArticleById,
     getShopifyInventoryIdsBySku,
+    refreshSkuMappingIfStale,
     isReady
   };
 }

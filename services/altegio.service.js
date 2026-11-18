@@ -85,3 +85,34 @@ export async function fetchProduct(companyId, productId) {
     initialDelay: 1000
   });
 }
+
+// Повний список товарів філії разом з actual_amounts по складах.
+// API Altegio віддає максимум 100 записів на сторінку (більший count мовчки
+// падає до 25), а meta з total порожня — тож гортаємо до порожньої сторінки.
+const GOODS_PAGE_SIZE = 100;
+const GOODS_MAX_PAGES = 500;
+
+export async function fetchAllGoods(companyId) {
+  const all = [];
+  for (let page = 1; page <= GOODS_MAX_PAGES; page++) {
+    const data = await retryWithBackoff(async () => {
+      const res = await axios.get(
+        `https://api.alteg.io/api/v1/goods/${companyId}`,
+        {
+          params: { page, count: GOODS_PAGE_SIZE },
+          headers: {
+            'Authorization': `Bearer ${partnerToken}, User ${userToken}`,
+            Accept: 'application/vnd.api.v2+json'
+          },
+          timeout: 20000
+        }
+      );
+      return res.data;
+    }, { maxRetries: 3, initialDelay: 1000 });
+
+    const items = Array.isArray(data?.data) ? data.data : [];
+    all.push(...items);
+    if (items.length < GOODS_PAGE_SIZE) return all;
+  }
+  throw new Error(`Altegio goods pagination exceeded ${GOODS_MAX_PAGES} pages`);
+}
