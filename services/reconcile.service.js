@@ -110,7 +110,7 @@ export async function runReconcile({ dryRun = true, trigger = 'manual' } = {}) {
 
     const result = computeReconcileDiffs(goods, variants, ALTEGIO_STORAGE_ID);
 
-    let applied = 0;
+    let queued = 0;
     if (!dryRun) {
       const queuedGoods = new Set();
       for (const diff of result.diffs) {
@@ -125,7 +125,7 @@ export async function runReconcile({ dryRun = true, trigger = 'manual' } = {}) {
           json: JSON.stringify({ trigger, ...diff })
         });
         await RedisManager.setQueue(hookId, diff.goodId);
-        applied += 1;
+        queued += 1;
       }
     }
 
@@ -137,7 +137,7 @@ export async function runReconcile({ dryRun = true, trigger = 'manual' } = {}) {
       altegioGoods: goods.length,
       checked: result.checked,
       diffs: result.diffs.length,
-      applied,
+      queued, // поставлено в чергу воркера, а не вже записано в Shopify
       notInAltegio: result.notInAltegio.length,
       ambiguous: result.ambiguous.length,
       notStocked: result.notStocked.length
